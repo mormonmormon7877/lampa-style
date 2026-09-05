@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 11: glass source selection. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 13: glass reflections including episodes. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -70,9 +70,11 @@
         var width = Number(pref('width'));
         var gain = (100 - Number(pref('transparency'))) / 30;
         var scale = 1 + Number(pref('zoom')) / 100;
-        var ring = 'body .card.focus .card__view::after,body .card.hover .card__view::after';
+        var cardRing = 'body .card.focus .card__view::after,body .card.hover .card__view::after';
+        var episodeRing = 'body .full-episode.focus::after,body .full-episode.hover::after,body .card-episode.focus .full-episode::after,body .card-episode.hover .full-episode::after';
+        var ring = cardRing + ',' + episodeRing;
         var selected = 'body .card.focus .card__view,body .card.hover .card__view';
-        var result = baseCss.replace(/-15px/g, '-' + width + 'px')
+        var result = baseCss.split(cardRing).join(ring).replace(/-15px/g, '-' + width + 'px')
             .replace(/border:15px/g, 'border:' + width + 'px')
             .replace(/padding:15px/g, 'padding:' + width + 'px')
             .replace(/border-radius:31px/g, 'border-radius:' + (16 + width) + 'px')
@@ -83,6 +85,7 @@
         result += '\nbody .card .card__view{margin-bottom:' + (width + 10) + 'px!important;}';
         result += '\n' + selected + '{-webkit-animation:none!important;animation:none!important;-webkit-transform:scale(' + scale + ')!important;transform:scale(' + scale + ')!important;}';
         result += '\nbody .card.focus,body .card.hover{z-index:3;}';
+        result += '\nbody .full-episode{position:relative;overflow:visible!important;}';
         result += '\nbody .atv-glass-row .card:not(.focus):not(.hover) .card__img{opacity:' + (1 - Number(pref('dim')) / 100) + '!important;}';
         if (pref('shine') === 'true') {
             // The existing mask clips the moving reflection to the ring only.
@@ -101,6 +104,16 @@
         result += '\nbody .selectbox .selectbox-item.focus .selectbox-item__title,body .selectbox .selectbox-item.hover .selectbox-item__title{color:#fff!important;}';
         result += '\nbody .selectbox .selectbox-item.focus .selectbox-item__checkbox,body .selectbox .selectbox-item.focus .settings-folder__icon{-webkit-filter:none!important;filter:none!important;}';
         result += '\nbody .selectbox .selectbox-item.focus::after{border-color:#fff!important;}';
+        var shineTargets = 'body .menu:not(.editable) .menu__item.focus,body .menu:not(.editable) .menu__item.hover,body .selectbox .selectbox-item.focus,body .selectbox .selectbox-item.hover,body .online.focus,body .online.hover';
+        if (pref('buttons') === 'true') shineTargets += ',body .full-start__button.focus,body .full-start__button.hover';
+        if (pref('shine') === 'true') {
+            result += '\n' + shineTargets + '{background-image:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.28) 49%,transparent 63%),' + sourceGlass + '!important;background-size:300% 100%,100% 100%!important;background-repeat:no-repeat!important;background-position:-100% 0,0 0;-webkit-animation:atv-glass-shine 2s ease-out 1 both!important;animation:atv-glass-shine 2s ease-out 1 both!important;}';
+        }
+        var noMotionTargets = shineTargets.replace(/body /g, 'body.no--animation ');
+        result += '\n' + noMotionTargets + '{-webkit-animation:none!important;animation:none!important;}';
+        result += '\n@media(prefers-reduced-motion:reduce){' + shineTargets + '{-webkit-animation:none!important;animation:none!important;}}';
+        result += '\n' + episodeRing.replace(/body /g, 'body.no--animation ') + '{-webkit-animation:none!important;animation:none!important;}';
+        result += '\n@media(prefers-reduced-motion:reduce){' + episodeRing + '{-webkit-animation:none!important;animation:none!important;}}';
         result += '\nbody.no--animation .card__view,body.no--animation .card__view::after{-webkit-transition:none!important;transition:none!important;-webkit-animation:none!important;animation:none!important;}';
         result += '\n@media(prefers-reduced-motion:reduce){body .card__view,body .card__view::after{-webkit-transition:none!important;transition:none!important;-webkit-animation:none!important;animation:none!important;}}';
         css = result;
