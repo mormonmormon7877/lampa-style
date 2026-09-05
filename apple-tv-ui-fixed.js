@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 17: glass player and remote options menu. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 18: configurable pause screensaver. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -320,4 +320,216 @@
     render();
     setup();
 
+})();
+
+/* Pause screensaver v18. Independent lifecycle; never changes the movie URL/time. */
+(function () {
+    'use strict';
+    if (window.__applePauseSaver) window.__applePauseSaver.destroy();
+    var defaultManifest = 'https://mormonmormon7877.github.io/lampa-style/screensavers/manifest.json';
+    try { if (document.currentScript && document.currentScript.src) defaultManifest = new URL('screensavers/manifest.json',document.currentScript.src).href; } catch (ignore) {}
+    var key = 'apple_pause_';
+    var component = 'apple_pause_saver';
+    var delayTimer, mediaTimer, clockTimer, bootTimer, request;
+    var overlay = null, media = null, clock = null;
+    var files = [], fileIndex = 0, failures = 0, generation = 0;
+    var paused = false, dead = false, preview = false, previous = '';
+    var swallowed = null, subscriptions = [], attempts = 0;
+    var defaults = {delay:'120',mode:'clock',interval:'30',manifest:defaultManifest};
+    var choices = {
+        delay:{'0':'Выключена','30':'30 секунд','60':'1 минута','120':'2 минуты','300':'5 минут','600':'10 минут','900':'15 минут'},
+        mode:{clock:'Часы',images:'Картинки из папки',videos:'Видео из папки',mixed:'Картинки и видео'},
+        interval:{'15':'15 секунд','30':'30 секунд','60':'1 минута','120':'2 минуты'}
+    };
+    function get(name) {
+        var value = defaults[name];
+        try { value = String(Lampa.Storage.get(key + name,value)); } catch (ignore) {}
+        if (choices[name] && !Object.prototype.hasOwnProperty.call(choices[name],value)) value = defaults[name];
+        return value;
+    }
+    function notify(message) { if (window.Lampa && Lampa.Noty) Lampa.Noty.show(message); }
+    function moviePaused() {
+        if (!window.Lampa || !Lampa.Player || !Lampa.Player.opened || !Lampa.Player.opened()) return false;
+        var root = document.querySelector('.player');
+        if (root && root.classList.contains('player--loading')) return false;
+        try {
+            var video = Lampa.PlayerVideo && Lampa.PlayerVideo.video();
+            if (video && typeof video.paused === 'boolean') return video.paused && !video.ended;
+        } catch (ignore) {}
+        return paused;
+    }
+    function releaseMedia() {
+        clearTimeout(mediaTimer);
+        if (media) {
+            media.onload = media.onerror = media.onended = media.onloadeddata = null;
+            if (media.tagName === 'VIDEO') {
+                media.pause(); media.removeAttribute('src'); media.load();
+            }
+            if (media.parentNode) media.parentNode.removeChild(media);
+            media = null;
+        }
+    }
+    function hide(rearm) {
+        generation++;
+        if (request) { request.abort(); request = null; }
+        releaseMedia();
+        clearInterval(clockTimer);
+        if (overlay) overlay.parentNode.removeChild(overlay);
+        overlay = null; clock = null; preview = false;
+        if (window.Lampa && Lampa.Controller && Lampa.Controller.enabled().name === component && previous) Lampa.Controller.toggle(previous);
+        if (rearm) arm();
+    }
+    function arm() {
+        clearTimeout(delayTimer);
+        if (dead || overlay || get('delay') === '0' || !moviePaused()) return;
+        delayTimer = setTimeout(function () {
+            if (!moviePaused() || dead) return;
+            if (document.hidden || (Lampa.Select && Lampa.Select.opened && Lampa.Select.opened()) || document.body.classList.contains('settings--open')) { arm(); return; }
+            show(false);
+        },Number(get('delay')) * 1000);
+    }
+    function stopped() { paused = false; clearTimeout(delayTimer); hide(false); }
+    function onPause() { paused = true; arm(); }
+    function tick() {
+        if (!clock) return;
+        var now = new Date();
+        clock.textContent = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+        var corners = [['12%','14%'],['65%','18%'],['60%','68%'],['15%','65%']];
+        var corner = corners[Math.floor(Date.now() / 30000) % corners.length];
+        clock.style.left = corner[0]; clock.style.top = corner[1];
+    }
+    function loadList(done, report) {
+        if (request) request.abort();
+        var token = generation;
+        var base;
+        try { base = new URL(get('manifest')); if (!/^https?:$/.test(base.protocol)) throw new Error(); }
+        catch (ignore) { if (report) notify('Укажите HTTP(S)-адрес manifest.json.'); done([]); return; }
+        var xhr = request = new XMLHttpRequest();
+        xhr.open('GET',base.href + (base.search ? '&' : '?') + 'v=' + Date.now(),true);
+        xhr.timeout = 10000;
+        function finish(list) {
+            if (request === xhr) request = null;
+            if (!dead && token === generation) done(list);
+        }
+        xhr.onload = function () {
+            var list = [];
+            try {
+                if (xhr.status < 200 || xhr.status >= 300) throw new Error();
+                var data = JSON.parse(xhr.responseText);
+                if (!Array.isArray(data.files)) throw new Error();
+                data.files.slice(0,200).forEach(function (entry) {
+                    if (typeof entry !== 'string') return;
+                    var url = new URL(entry,base.href);
+                    if (!/^https?:$/.test(url.protocol)) return;
+                    var type = /\.(mp4|webm)$/i.test(url.pathname) ? 'video' : /\.(jpg|jpeg|png|webp|svg)$/i.test(url.pathname) ? 'image' : '';
+                    if (type) list.push({url:url.href,type:type});
+                });
+                if (report) notify('Заставок в папке: ' + list.length);
+            } catch (ignore) { if (report) notify('Не удалось прочитать папку. Проверьте адрес manifest.json.'); }
+            finish(list);
+        };
+        xhr.onerror = xhr.ontimeout = function () { if (report) notify('Папка заставок недоступна.'); finish([]); };
+        xhr.send();
+    }
+    function nextMedia() {
+        releaseMedia();
+        if (!overlay || !files.length || failures >= files.length) return;
+        var entry = files[fileIndex++ % files.length];
+        var item = media = document.createElement(entry.type === 'video' ? 'video' : 'img');
+        item.style.cssText = 'position:absolute;inset:0;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none';
+        var token = generation;
+        function failed() {
+            if (generation !== token || media !== item) return;
+            failures++;
+            // A failed video decoder must not affect the paused movie.
+            nextMedia();
+        }
+        item.onerror = failed;
+        overlay.insertBefore(item,clock);
+        if (entry.type === 'video') {
+            item.muted = true; item.defaultMuted = true; item.setAttribute('muted','');
+            item.setAttribute('playsinline',''); item.preload = 'auto';
+            item.onended = function () { if (media === item) { failures = 0; nextMedia(); } };
+            item.onloadeddata = function () { if (media === item) failures = 0; };
+            item.src = entry.url;
+            var promise = item.play();
+            if (promise && promise.catch) promise.catch(failed);
+            mediaTimer = setTimeout(function () { if (media === item && item.readyState < 2) failed(); },15000);
+        } else {
+            item.onload = function () {
+                if (media !== item) return;
+                failures = 0; clearTimeout(mediaTimer);
+                mediaTimer = setTimeout(nextMedia,Number(get('interval')) * 1000);
+            };
+            item.src = entry.url;
+            mediaTimer = setTimeout(failed,15000);
+        }
+    }
+    function show(isPreview) {
+        if (dead || overlay || (!isPreview && !moviePaused())) return;
+        clearTimeout(delayTimer);
+        generation++; preview = isPreview;
+        overlay = document.createElement('div'); overlay.id = 'apple-pause-overlay';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483000;background:#000;overflow:hidden;color:#b7bcc5';
+        clock = document.createElement('div');
+        clock.style.cssText = 'position:absolute;font:300 6vw Arial,sans-serif;text-shadow:0 2px 12px #000;z-index:1;pointer-events:none';
+        overlay.appendChild(clock);document.body.appendChild(overlay);
+        tick();clockTimer = setInterval(tick,1000);
+        if (Lampa.Controller && Lampa.Controller.add) {
+            previous = Lampa.Controller.enabled().name;
+            var dismiss = function () { hide(true); };
+            Lampa.Controller.add(component,{invisible:true,toggle:function () {},up:dismiss,down:dismiss,left:dismiss,right:dismiss,enter:dismiss,back:dismiss,long:dismiss});
+            Lampa.Controller.toggle(component);
+        }
+        if (get('mode') !== 'clock') loadList(function (list) {
+            if (!overlay) return;
+            files = list.filter(function (item) { return get('mode') === 'mixed' || (get('mode') === 'images' && item.type === 'image') || (get('mode') === 'videos' && item.type === 'video'); });
+            fileIndex = 0; failures = 0;
+            nextMedia();
+        },false);
+    }
+    function input(event) {
+        var code = event.keyCode || event.which;
+        if (event.type === 'keyup') {
+            if (swallowed !== null && code === swallowed) { swallowed = null; event.preventDefault(); event.stopImmediatePropagation(); }
+            return;
+        }
+        if (swallowed !== null && event.type === 'keydown' && code === swallowed) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+        if (overlay) {
+            if (event.type === 'keydown') swallowed = code;
+            event.preventDefault();event.stopImmediatePropagation();hide(true);
+        } else arm();
+    }
+    function changed() { hide(false);arm(); }
+    function subscribe(bus,event,fn) { if (bus && bus.follow) { bus.follow(event,fn);subscriptions.push([bus,event,fn]); } }
+    function setup() {
+        if (dead) return;
+        if (!window.Lampa || !Lampa.SettingsApi || !Lampa.Storage || !document.body) {
+            if (++attempts < 240) bootTimer = setTimeout(setup,250);
+            return;
+        }
+        var api = Lampa.SettingsApi;
+        if (api.removeComponent) api.removeComponent(component);
+        api.addComponent({component:component,name:'Заставка',icon:'<svg viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="15" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M8 22h8m-4-4v4" stroke="currentColor" stroke-width="1.5"/></svg>'});
+        [['delay','Включать после паузы'],['mode','Тип заставки'],['interval','Смена картинки']].forEach(function (entry) {
+            api.addParam({component:component,param:{name:key + entry[0],type:'select',values:choices[entry[0]],default:defaults[entry[0]]},field:{name:entry[1]},onChange:changed});
+        });
+        api.addParam({component:component,param:{name:key + 'manifest',type:'input',values:'',default:defaultManifest},field:{name:'Папка заставок',description:'Адрес файла screensavers/manifest.json на вашем GitHub Pages.'},onChange:changed});
+        api.addParam({component:component,param:{name:key + 'refresh',type:'button'},field:{name:'Проверить папку'},onChange:function () { loadList(function () {},true); }});
+        api.addParam({component:component,param:{name:key + 'preview',type:'button'},field:{name:'Предпросмотр',description:'Любая кнопка закрывает заставку. Фильм остаётся на паузе.'},onChange:function () { show(true); }});
+        var videoBus = Lampa.PlayerVideo && Lampa.PlayerVideo.listener;
+        subscribe(videoBus,'pause',onPause);subscribe(videoBus,'play',stopped);subscribe(videoBus,'ended',stopped);subscribe(videoBus,'destroy',stopped);
+        var playerBus = Lampa.Player && Lampa.Player.listener;
+        subscribe(playerBus,'destroy',stopped);subscribe(playerBus,'start',stopped);subscribe(playerBus,'external',stopped);
+        window.addEventListener('keydown',input,true);window.addEventListener('keyup',input,true);
+        window.addEventListener('mousedown',input,true);window.addEventListener('touchstart',input,true);
+        arm();
+    }
+    window.__applePauseSaver = {destroy:function () {
+        dead = true;clearTimeout(delayTimer);clearTimeout(bootTimer);hide(false);
+        subscriptions.forEach(function (sub) { if (sub[0].remove) sub[0].remove(sub[1],sub[2]); });
+        window.removeEventListener('keydown',input,true);window.removeEventListener('keyup',input,true);
+        window.removeEventListener('mousedown',input,true);window.removeEventListener('touchstart',input,true);
+    }};
+    setup();
 })();
