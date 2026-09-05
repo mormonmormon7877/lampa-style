@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 15: clear, dark and smoked glass. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 16: transparent glass sidebar panel. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -73,6 +73,7 @@
         var tone = pref('tone');
         if (tone === 'dark') gain *= 0.65;
         if (tone === 'smoke') gain *= 0.4;
+        var panelAlpha = (tone === 'smoke' ? 0.55 : tone === 'dark' ? 0.38 : 0.20) * ((100 - Number(pref('transparency'))) / 30);
         var scale = 1 + Number(pref('zoom')) / 100;
         var cardRing = 'body .card.focus .card__view::after,body .card.hover .card__view::after';
         var episodeRing = 'body .full-episode.focus::after,body .full-episode.hover::after,body .card-episode.focus .full-episode::after,body .card-episode.hover .full-episode::after';
@@ -90,6 +91,8 @@
         result += '\n' + selected + '{-webkit-animation:none!important;animation:none!important;-webkit-transform:scale(' + scale + ')!important;transform:scale(' + scale + ')!important;}';
         result += '\nbody .card.focus,body .card.hover{z-index:3;}';
         result += '\nbody .full-episode{position:relative;overflow:visible!important;}';
+        result += '\nbody .menu,body .wrap__left{background:transparent!important;}';
+        result += '\nbody .wrap__left > .scroll{background:linear-gradient(135deg,rgba(255,255,255,.09),rgba(255,255,255,.015) 45%,rgba(255,255,255,.045)),rgba(12,16,22,' + Math.min(.8,panelAlpha).toFixed(3) + ')!important;border-radius:0 22px 22px 0!important;box-shadow:inset -1px 0 0 rgba(255,255,255,.22),8px 0 22px rgba(0,0,0,.12)!important;-webkit-backdrop-filter:blur(10px) saturate(135%)!important;backdrop-filter:blur(10px) saturate(135%)!important;}';
         result += '\nbody .atv-glass-row .card:not(.focus):not(.hover) .card__img{opacity:' + (1 - Number(pref('dim')) / 100) + '!important;}';
         if (pref('shine') === 'true') {
             // The existing mask clips the moving reflection to the ring only.
