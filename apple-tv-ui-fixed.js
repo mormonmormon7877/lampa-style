@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 16: transparent glass sidebar panel. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 17: glass player and remote options menu. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -49,6 +49,9 @@
     var row = null;
     var dead = false;
     var bootAttempts = 0;
+    var controllerListener = null;
+    var panelController = null;
+    var originalPanelUp = null;
     var component = 'apple_glass';
     var prefix = 'apple_glass_';
     var options = [
@@ -58,7 +61,9 @@
         ['zoom', 'Увеличение постера', {'0':'Выключено','5':'5%','6':'6%','7':'7%'}, '6'],
         ['shine', 'Блик при выборе', {'true':'Включён','false':'Выключен'}, 'true'],
         ['dim', 'Затемнение соседних постеров', {'0':'Выключено','15':'Лёгкое — 15%','25':'Обычное — 25%','35':'Сильнее — 35%'}, '25'],
-        ['buttons', 'Стеклянные кнопки фильма', {'true':'Включены','false':'Выключены'}, 'true']
+        ['buttons', 'Стеклянные кнопки фильма', {'true':'Включены','false':'Выключены'}, 'true'],
+        ['player', 'Стеклянный плеер', {'true':'Включён','false':'Выключен'}, 'true'],
+        ['remote', 'Меню плеера стрелкой вверх', {'true':'Качество, звук и режимы','false':'Штатное управление'}, 'true']
     ];
     function pref(name) {
         var spec;
@@ -116,6 +121,19 @@
         result += '\nbody .settings-folder.focus .settings-folder__icon,body .settings-folder.hover .settings-folder__icon,body .settings-param.focus .settings-folder__icon,body .settings-param.hover .settings-folder__icon,body .settings-param.focus .selectbox-item__checkbox{-webkit-filter:none!important;filter:none!important;}';
         var shineTargets = 'body .menu:not(.editable) .menu__item.focus,body .menu:not(.editable) .menu__item.hover,body .selectbox .selectbox-item.focus,body .selectbox .selectbox-item.hover,body .online.focus,body .online.hover';
         shineTargets += ',' + settingsTargets;
+        if (pref('player') === 'true') {
+            var playerTargets = 'body .player-panel .button.focus,body .player-panel .button.hover';
+            result += '\nbody .player-panel__body{background:linear-gradient(125deg,rgba(255,255,255,.10),rgba(255,255,255,.025)),rgba(10,14,20,' + Math.min(.85,panelAlpha + .28).toFixed(3) + ')!important;border-radius:22px!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2),0 8px 30px rgba(0,0,0,.25)!important;-webkit-backdrop-filter:blur(10px) saturate(135%);backdrop-filter:blur(10px) saturate(135%);}';
+            result += '\n' + playerTargets + '{background:' + sourceGlass + '!important;color:#fff!important;border-radius:14px!important;box-shadow:inset 0 0 0 2px rgba(255,255,255,.8),0 0 12px rgba(255,255,255,.12)!important;}';
+            result += '\nbody .player-panel .button.focus svg,body .player-panel .button.hover svg{color:#fff!important;-webkit-filter:none!important;filter:none!important;}';
+            result += '\nbody .player-panel__timeline{height:8px!important;border-radius:8px!important;background:rgba(255,255,255,.18)!important;overflow:visible!important;}';
+            result += '\nbody .player-panel__peding{border-radius:8px!important;background:rgba(255,255,255,.3)!important;}body .player-panel__position{height:100%!important;border-radius:8px!important;background:linear-gradient(90deg,#b9dfff,#fff)!important;}';
+            result += '\nbody .player-panel__position > div{position:absolute!important;right:-8px!important;top:50%!important;width:16px!important;height:16px!important;margin-top:-8px!important;border-radius:50%!important;background:#fff!important;box-shadow:0 0 0 3px rgba(255,255,255,.2)!important;pointer-events:none!important;}';
+            result += '\nbody .player-panel__timeline.focus{box-shadow:0 0 0 2px rgba(255,255,255,.7)!important;}';
+            result += '\nbody .player-panel__timenow,body .player-panel__timeend{font-size:1.2em!important;font-weight:600!important;line-height:1.3!important;}body .player-panel__filename,body .player-info__name{font-size:1.6em!important;line-height:1.25!important;text-shadow:0 2px 5px #000;}';
+            shineTargets += ',' + playerTargets;
+        }
+        result += '\n.atv-player-hint{font-size:1em;line-height:1.3;color:rgba(255,255,255,.85);padding:.7em 1em;text-align:center;pointer-events:none;}';
         if (pref('buttons') === 'true') shineTargets += ',body .full-start__button.focus,body .full-start__button.hover';
         if (pref('shine') === 'true') {
             result += '\n' + shineTargets + '{background-image:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.28) 49%,transparent 63%),' + sourceGlass + '!important;background-size:300% 100%,100% 100%!important;background-repeat:no-repeat!important;background-position:-100% 0,0 0;-webkit-animation:atv-glass-shine 2s ease-out 1 both!important;animation:atv-glass-shine 2s ease-out 1 both!important;}';
@@ -139,6 +157,88 @@
         css = result;
         apply();
         refreshRow();
+        hookPlayer();
+    }
+    function restorePanel() {
+        if (panelController && panelController.up === playerUp) panelController.up = originalPanelUp;
+        panelController = null;
+        originalPanelUp = null;
+    }
+    function playerUp() {
+        if (!openPlayerMenu() && originalPanelUp) originalPanelUp.call(panelController);
+    }
+    function tell(message) {
+        if (window.Lampa && Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(message);
+    }
+    function nativePlayerAction(selector, title) {
+        Lampa.Controller.toggle('player_panel');
+        var button = document.querySelector('.player .player-panel ' + selector);
+        if (!button || button.classList.contains('hide')) {
+            tell(title + ': источник не передал доступные варианты.');
+            return;
+        }
+        try {
+            if (Lampa.Utils && Lampa.Utils.trigger) Lampa.Utils.trigger(button, 'hover:enter');
+            else if (window.$) window.$(button).trigger('hover:enter');
+            else { tell('Не удалось открыть штатное меню этой версии Lampa.'); return; }
+            if (Lampa.Select.opened && !Lampa.Select.opened()) tell(title + ': список вариантов недоступен для этого видео.');
+        } catch (error) { tell('Не удалось открыть: ' + title); }
+    }
+    function chooseGlassMode() {
+        Lampa.Select.show({title:'Режим стекла',items:[
+            {title:'Обычное стекло',value:'clear',selected:pref('tone') === 'clear'},
+            {title:'Тёмное стекло',value:'dark',selected:pref('tone') === 'dark'},
+            {title:'Дымчатое стекло',value:'smoke',selected:pref('tone') === 'smoke'}
+        ],onSelect:function (item) {
+            Lampa.Storage.set(prefix + 'tone',item.value);
+            render();
+            Lampa.Controller.toggle('player_panel');
+        },onBack:openPlayerMenu});
+    }
+    function openPlayerMenu() {
+        if (dead || !window.Lampa || !Lampa.Select || !Lampa.Select.show || !Lampa.Controller || !document.querySelector('.player .player-panel')) return false;
+        Lampa.Select.show({title:'Качество, звук и режимы',items:[
+            {title:'Качество видео',action:'quality'},
+            {title:'Звуковая дорожка / озвучка',action:'tracks'},
+            {title:'Субтитры',action:'subs'},
+            {title:'Источник / поток',action:'flow'},
+            {title:'Формат изображения и скорость',action:'settings'},
+            {title:'Режим стекла',action:'glass'},
+            {title:'Перемотка',action:'rewind'}
+        ],onSelect:function (item) {
+            if (item.action === 'glass') { chooseGlassMode(); return; }
+            if (item.action === 'rewind') {
+                Lampa.Controller.toggle('player_panel');
+                if (originalPanelUp) originalPanelUp.call(panelController);
+                return;
+            }
+            nativePlayerAction('.player-panel__' + item.action,item.title);
+        },onBack:function () { Lampa.Controller.toggle('player_panel'); }});
+        return true;
+    }
+    function hookPlayer() {
+        if (dead || !window.Lampa || !Lampa.Controller || !Lampa.Controller.enabled) return;
+        if (pref('remote') !== 'true' || !Lampa.Select || !Lampa.Select.show) {
+            restorePanel();
+            var hints = document.querySelectorAll('.atv-player-hint');
+            for (var i = 0; i < hints.length; i++) hints[i].parentNode.removeChild(hints[i]);
+            return;
+        }
+        var active = Lampa.Controller.enabled();
+        if (active.name !== 'player_panel' || !active.controller) return;
+        if (panelController !== active.controller) {
+            restorePanel();
+            panelController = active.controller;
+            originalPanelUp = panelController.up;
+            panelController.up = playerUp;
+        }
+        var body = document.querySelector('.player .player-panel__body');
+        if (body && !body.querySelector('.atv-player-hint')) {
+            var hint = document.createElement('div');
+            hint.className = 'atv-player-hint';
+            hint.textContent = '↑ Качество, звук и режимы • OK — выбрать • Назад — к видео';
+            body.appendChild(hint);
+        }
     }
     function refreshRow() {
         var next = null;
@@ -197,12 +297,20 @@
             }});
         }
         window.__appleGlassSettingsAdded = true;
+        if (!controllerListener && Lampa.Controller && Lampa.Controller.listener && Lampa.Controller.listener.follow) {
+            controllerListener = Lampa.Controller.listener;
+            controllerListener.follow('toggle',hookPlayer);
+        }
         render();
     }
     window.__lampaAppleGlass = {
         render:render,
         destroy:function () {
             dead = true;
+            if (controllerListener && controllerListener.remove) controllerListener.remove('toggle',hookPlayer);
+            restorePanel();
+            var hints = document.querySelectorAll('.atv-player-hint');
+            for (var i = 0; i < hints.length; i++) hints[i].parentNode.removeChild(hints[i]);
             clearTimeout(timer);
             if (frame) window.cancelAnimationFrame(frame);
             if (observer) observer.disconnect();
