@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 6: transparent glass, progressive backdrop blur. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 7: glass cards and sidebar selection. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -12,7 +12,11 @@
         '.card__title{font-weight:500!important}',
         '.menu{background-color:rgba(20,20,20,.96)}',
         '.menu__item{border-radius:12px}',
-        'body .menu__item.focus{background:#fff!important;color:#111!important;box-shadow:0 0 14px rgba(134,202,255,.6)!important}',
+        "body .menu:not(.editable) .menu__item.focus,body .menu:not(.editable) .menu__item.hover{background:linear-gradient(125deg,rgba(255,255,255,.28) 0%,rgba(255,255,255,.09) 19%,rgba(255,255,255,.035) 43%,rgba(255,255,255,.12) 74%,rgba(255,255,255,.24) 100%)!important;color:#fff!important;border-radius:16px!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.6),inset 0 1px 3px rgba(255,255,255,.16),0 3px 8px rgba(0,0,0,.15)!important;-webkit-backdrop-filter:blur(6px) saturate(145%)!important;backdrop-filter:blur(6px) saturate(145%)!important;}",
+        "body .menu:not(.editable) .menu__item.focus .menu__text,body .menu:not(.editable) .menu__item.hover .menu__text{color:#fff!important;}",
+        "body .menu:not(.editable) .menu__item.focus .menu__ico > img,body .menu:not(.editable) .menu__item.hover .menu__ico > img{-webkit-filter:none!important;filter:none!important;}",
+        "body .menu:not(.editable) .menu__item.focus .menu__ico [stroke]:not([stroke=\"none\"]),body .menu:not(.editable) .menu__item.hover .menu__ico [stroke]:not([stroke=\"none\"]){stroke:#fff!important;}",
+        "body .menu:not(.editable) .menu__item.focus .menu__ico [fill]:not([fill=\"none\"]),body .menu:not(.editable) .menu__item.hover .menu__ico [fill]:not([fill=\"none\"]){fill:#fff!important;}",
         '@media (prefers-reduced-motion:reduce){.card .card__view{transition:none}}'
     ].join('\n');
     function apply() {
