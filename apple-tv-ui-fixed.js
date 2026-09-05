@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 14: glass reflections in settings. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 15: clear, dark and smoked glass. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -52,6 +52,7 @@
     var component = 'apple_glass';
     var prefix = 'apple_glass_';
     var options = [
+        ['tone', 'Вид стекла', {'clear':'Обычное стекло','dark':'Тёмное стекло','smoke':'Дымчатое стекло'}, 'clear'],
         ['width', 'Толщина рамки', {'5':'5 px','10':'10 px','15':'15 px','20':'20 px'}, '15'],
         ['transparency', 'Прозрачность стекла', {'50':'50% — ярче','70':'70% — обычная','85':'85% — прозрачнее'}, '70'],
         ['zoom', 'Увеличение постера', {'0':'Выключено','5':'5%','6':'6%','7':'7%'}, '6'],
@@ -69,6 +70,9 @@
     function render() {
         var width = Number(pref('width'));
         var gain = (100 - Number(pref('transparency'))) / 30;
+        var tone = pref('tone');
+        if (tone === 'dark') gain *= 0.65;
+        if (tone === 'smoke') gain *= 0.4;
         var scale = 1 + Number(pref('zoom')) / 100;
         var cardRing = 'body .card.focus .card__view::after,body .card.hover .card__view::after';
         var episodeRing = 'body .full-episode.focus::after,body .full-episode.hover::after,body .card-episode.focus .full-episode::after,body .card-episode.hover .full-episode::after';
@@ -112,6 +116,15 @@
         if (pref('buttons') === 'true') shineTargets += ',body .full-start__button.focus,body .full-start__button.hover';
         if (pref('shine') === 'true') {
             result += '\n' + shineTargets + '{background-image:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.28) 49%,transparent 63%),' + sourceGlass + '!important;background-size:300% 100%,100% 100%!important;background-repeat:no-repeat!important;background-position:-100% 0,0 0;-webkit-animation:atv-glass-shine 2s ease-out 1 both!important;animation:atv-glass-shine 2s ease-out 1 both!important;}';
+        }
+        if (tone !== 'clear') {
+            var tint = tone === 'dark' ? 'rgba(12,17,24,.38)' : 'rgba(5,8,12,.65)';
+            var tintTargets = shineTargets;
+            if (pref('buttons') === 'true') tintTargets += ',body .full-start__button';
+            result += '\n' + tintTargets + '{background-color:' + tint + '!important;}';
+            // Without mask support, tint only the border; never cover the poster.
+            result += '\n' + ring + '{border-color:' + tint + '!important;}';
+            result += '\n@supports (-webkit-mask-composite:xor){' + ring + '{background-color:' + tint + '!important;}}';
         }
         var noMotionTargets = shineTargets.replace(/body /g, 'body.no--animation ');
         result += '\n' + noMotionTargets + '{-webkit-animation:none!important;animation:none!important;}';
