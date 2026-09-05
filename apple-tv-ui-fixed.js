@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 19: hold video frame between screensavers. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 20: date and screensaver diagnostics. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -322,7 +322,7 @@
 
 })();
 
-/* Pause screensaver v19. Independent lifecycle; never changes the movie URL/time. */
+/* Pause screensaver v20. Independent lifecycle; never changes the movie URL/time. */
 (function () {
     'use strict';
     if (window.__applePauseSaver) window.__applePauseSaver.destroy();
@@ -331,7 +331,8 @@
     var key = 'apple_pause_';
     var component = 'apple_pause_saver';
     var delayTimer, mediaTimer, clockTimer, bootTimer, request;
-    var overlay = null, media = null, clock = null, still = null;
+    var overlay = null, media = null, clock = null, still = null, timeLabel = null, dateLabel = null, statusLabel = null;
+    var lastError = '';
     var files = [], fileIndex = 0, failures = 0, generation = 0;
     var paused = false, dead = false, preview = false, previous = '';
     var swallowed = null, subscriptions = [], attempts = 0;
@@ -393,7 +394,9 @@
     function tick() {
         if (!clock) return;
         var now = new Date();
-        clock.textContent = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+        timeLabel.textContent = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2);
+        var months = ['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+        dateLabel.textContent = now.getDate() + ' ' + months[now.getMonth()] + ' ' + now.getFullYear();
         var corners = [['12%','14%'],['65%','18%'],['60%','68%'],['15%','65%']];
         var corner = corners[Math.floor(Date.now() / 30000) % corners.length];
         clock.style.left = corner[0]; clock.style.top = corner[1];
@@ -444,12 +447,14 @@
         releaseMedia();
         if (!overlay || !files.length || failures >= files.length) return;
         var entry = files[fileIndex++ % files.length];
+        if (statusLabel) statusLabel.textContent = 'Заставка v20 • ' + ((fileIndex - 1) % files.length + 1) + '/' + files.length + ' • Загрузка ' + entry.url.split('/').pop() + lastError;
         var item = media = document.createElement(entry.type === 'video' ? 'video' : 'img');
         item.style.cssText = 'position:absolute;inset:0;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none';
         var token = generation;
         function failed() {
             if (generation !== token || media !== item) return;
             failures++;
+            lastError = ' • Пропущен ' + entry.url.split('/').pop() + (item.error ? ' (код ' + item.error.code + ')' : ' (ошибка загрузки/запуска)');
             if (preview) notify('Не удалось загрузить видео: ' + entry.url.split('/').pop());
             // A failed video decoder must not affect the paused movie.
             nextMedia();
@@ -464,6 +469,7 @@
                 if (media !== item) return;
                 clearTimeout(mediaTimer); failures = 0;
                 item.style.visibility = 'visible';
+                if (statusLabel) statusLabel.textContent = 'Заставка v20 • ' + ((fileIndex - 1) % files.length + 1) + '/' + files.length + ' • ' + entry.url.split('/').pop() + lastError;
                 if (still) still.style.display = 'none';
             };
             item.onended = function () { if (media === item) { failures = 0; nextMedia(); } };
@@ -488,13 +494,24 @@
         clearTimeout(delayTimer);
         generation++; preview = isPreview;
         overlay = document.createElement('div'); overlay.id = 'apple-pause-overlay';
-        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483000;background:#000;overflow:hidden;color:#b7bcc5';
+        overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483000;background:#142337;background:radial-gradient(ellipse at 25% 35%,#254f60 0%,#192942 50%,#141c2d 100%);overflow:hidden;color:#b7bcc5';
         still = document.createElement('canvas');
         still.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:none';
         overlay.appendChild(still);
         clock = document.createElement('div');
         clock.style.cssText = 'position:absolute;font:300 6vw Arial,sans-serif;text-shadow:0 2px 12px #000;z-index:1;pointer-events:none';
-        overlay.appendChild(clock);document.body.appendChild(overlay);
+        timeLabel = document.createElement('div');
+        dateLabel = document.createElement('div');
+        dateLabel.style.cssText = 'font:300 2vw Arial,sans-serif;margin-top:.5em;white-space:nowrap';
+        clock.appendChild(timeLabel);clock.appendChild(dateLabel);
+        overlay.appendChild(clock);
+        statusLabel = null;
+        if (isPreview) {
+            statusLabel = document.createElement('div');
+            statusLabel.style.cssText = 'position:absolute;bottom:3%;left:3%;right:3%;z-index:2;font:18px Arial;color:white;background:rgba(0,0,0,.6);padding:12px';
+            statusLabel.textContent = 'Заставка v20';overlay.appendChild(statusLabel);
+        }
+        document.body.appendChild(overlay);
         tick();clockTimer = setInterval(tick,1000);
         if (Lampa.Controller && Lampa.Controller.add) {
             previous = Lampa.Controller.enabled().name;
@@ -505,7 +522,7 @@
         if (get('mode') !== 'clock') loadList(function (list) {
             if (!overlay) return;
             files = list.filter(function (item) { return get('mode') === 'mixed' || (get('mode') === 'images' && item.type === 'image') || (get('mode') === 'videos' && item.type === 'video'); });
-            fileIndex = 0; failures = 0;
+            fileIndex = 0; failures = 0; lastError = '';
             nextMedia();
         },false);
     }
