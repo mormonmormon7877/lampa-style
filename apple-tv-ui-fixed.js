@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 13: glass reflections including episodes. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 14: glass reflections in settings. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -104,7 +104,11 @@
         result += '\nbody .selectbox .selectbox-item.focus .selectbox-item__title,body .selectbox .selectbox-item.hover .selectbox-item__title{color:#fff!important;}';
         result += '\nbody .selectbox .selectbox-item.focus .selectbox-item__checkbox,body .selectbox .selectbox-item.focus .settings-folder__icon{-webkit-filter:none!important;filter:none!important;}';
         result += '\nbody .selectbox .selectbox-item.focus::after{border-color:#fff!important;}';
+        var settingsTargets = 'body .settings-folder.focus,body .settings-folder.hover,body .settings-param.focus,body .settings-param.hover';
+        result += '\n' + settingsTargets + '{background:' + sourceGlass + '!important;color:#fff!important;border-radius:16px!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.6),inset 0 1px 3px rgba(255,255,255,.16),0 3px 8px rgba(0,0,0,.15)!important;-webkit-backdrop-filter:blur(6px) saturate(145%)!important;backdrop-filter:blur(6px) saturate(145%)!important;}';
+        result += '\nbody .settings-folder.focus .settings-folder__icon,body .settings-folder.hover .settings-folder__icon,body .settings-param.focus .settings-folder__icon,body .settings-param.hover .settings-folder__icon,body .settings-param.focus .selectbox-item__checkbox{-webkit-filter:none!important;filter:none!important;}';
         var shineTargets = 'body .menu:not(.editable) .menu__item.focus,body .menu:not(.editable) .menu__item.hover,body .selectbox .selectbox-item.focus,body .selectbox .selectbox-item.hover,body .online.focus,body .online.hover';
+        shineTargets += ',' + settingsTargets;
         if (pref('buttons') === 'true') shineTargets += ',body .full-start__button.focus,body .full-start__button.hover';
         if (pref('shine') === 'true') {
             result += '\n' + shineTargets + '{background-image:linear-gradient(110deg,transparent 35%,rgba(255,255,255,.28) 49%,transparent 63%),' + sourceGlass + '!important;background-size:300% 100%,100% 100%!important;background-repeat:no-repeat!important;background-position:-100% 0,0 0;-webkit-animation:atv-glass-shine 2s ease-out 1 both!important;animation:atv-glass-shine 2s ease-out 1 both!important;}';
