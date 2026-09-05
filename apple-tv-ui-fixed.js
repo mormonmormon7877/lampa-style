@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 18: configurable pause screensaver. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 19: hold video frame between screensavers. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -322,7 +322,7 @@
 
 })();
 
-/* Pause screensaver v18. Independent lifecycle; never changes the movie URL/time. */
+/* Pause screensaver v19. Independent lifecycle; never changes the movie URL/time. */
 (function () {
     'use strict';
     if (window.__applePauseSaver) window.__applePauseSaver.destroy();
@@ -331,7 +331,7 @@
     var key = 'apple_pause_';
     var component = 'apple_pause_saver';
     var delayTimer, mediaTimer, clockTimer, bootTimer, request;
-    var overlay = null, media = null, clock = null;
+    var overlay = null, media = null, clock = null, still = null;
     var files = [], fileIndex = 0, failures = 0, generation = 0;
     var paused = false, dead = false, preview = false, previous = '';
     var swallowed = null, subscriptions = [], attempts = 0;
@@ -361,7 +361,7 @@
     function releaseMedia() {
         clearTimeout(mediaTimer);
         if (media) {
-            media.onload = media.onerror = media.onended = media.onloadeddata = null;
+            media.onload = media.onerror = media.onended = media.onloadeddata = media.onplaying = null;
             if (media.tagName === 'VIDEO') {
                 media.pause(); media.removeAttribute('src'); media.load();
             }
@@ -375,7 +375,7 @@
         releaseMedia();
         clearInterval(clockTimer);
         if (overlay) overlay.parentNode.removeChild(overlay);
-        overlay = null; clock = null; preview = false;
+        overlay = null; clock = null; still = null; preview = false;
         if (window.Lampa && Lampa.Controller && Lampa.Controller.enabled().name === component && previous) Lampa.Controller.toggle(previous);
         if (rearm) arm();
     }
@@ -432,6 +432,15 @@
         xhr.send();
     }
     function nextMedia() {
+        // Keep a frame while releasing the decoder for the next clip.
+        if (media && still && media.tagName === 'VIDEO' && media.readyState >= 2) {
+            try {
+                still.width = Math.min(media.videoWidth,1920);
+                still.height = Math.round(still.width * media.videoHeight / media.videoWidth);
+                still.getContext('2d').drawImage(media,0,0,still.width,still.height);
+                still.style.display = 'block';
+            } catch (ignore) {}
+        }
         releaseMedia();
         if (!overlay || !files.length || failures >= files.length) return;
         var entry = files[fileIndex++ % files.length];
@@ -441,6 +450,7 @@
         function failed() {
             if (generation !== token || media !== item) return;
             failures++;
+            if (preview) notify('Не удалось загрузить видео: ' + entry.url.split('/').pop());
             // A failed video decoder must not affect the paused movie.
             nextMedia();
         }
@@ -449,16 +459,24 @@
         if (entry.type === 'video') {
             item.muted = true; item.defaultMuted = true; item.setAttribute('muted','');
             item.setAttribute('playsinline',''); item.preload = 'auto';
+            item.style.visibility = 'hidden';
+            item.onplaying = function () {
+                if (media !== item) return;
+                clearTimeout(mediaTimer); failures = 0;
+                item.style.visibility = 'visible';
+                if (still) still.style.display = 'none';
+            };
             item.onended = function () { if (media === item) { failures = 0; nextMedia(); } };
             item.onloadeddata = function () { if (media === item) failures = 0; };
             item.src = entry.url;
             var promise = item.play();
             if (promise && promise.catch) promise.catch(failed);
-            mediaTimer = setTimeout(function () { if (media === item && item.readyState < 2) failed(); },15000);
+            mediaTimer = setTimeout(function () { if (media === item && item.style.visibility === 'hidden') failed(); },30000);
         } else {
             item.onload = function () {
                 if (media !== item) return;
                 failures = 0; clearTimeout(mediaTimer);
+                if (still) still.style.display = 'none';
                 mediaTimer = setTimeout(nextMedia,Number(get('interval')) * 1000);
             };
             item.src = entry.url;
@@ -471,6 +489,9 @@
         generation++; preview = isPreview;
         overlay = document.createElement('div'); overlay.id = 'apple-pause-overlay';
         overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483000;background:#000;overflow:hidden;color:#b7bcc5';
+        still = document.createElement('canvas');
+        still.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:none';
+        overlay.appendChild(still);
         clock = document.createElement('div');
         clock.style.cssText = 'position:absolute;font:300 6vw Arial,sans-serif;text-shadow:0 2px 12px #000;z-index:1;pointer-events:none';
         overlay.appendChild(clock);document.body.appendChild(overlay);
