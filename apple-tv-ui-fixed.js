@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 5: outer glass edge. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 6: transparent glass, progressive backdrop blur. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -7,7 +7,8 @@
         'body{background:#111!important;font-family:Arial,sans-serif}',
         'body .card .card__view{border-radius:16px!important;overflow:visible!important}',
         'body .card .card__img{border-radius:16px!important}',
-        'body .card.focus .card__view::after,body .card.hover .card__view::after{content:""!important;display:block!important;position:absolute!important;box-sizing:border-box!important;top:-15px!important;left:-15px!important;right:-15px!important;bottom:-15px!important;border:15px solid rgba(225,240,255,.32)!important;border-top-color:rgba(255,255,255,.88)!important;border-left-color:rgba(240,248,255,.62)!important;border-bottom-color:rgba(190,216,240,.38)!important;border-right-color:rgba(225,240,255,.48)!important;border-radius:31px!important;background:transparent!important;z-index:20!important;pointer-events:none!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.55),inset 0 3px 6px rgba(255,255,255,.22),inset 0 -2px 5px rgba(20,35,55,.3),0 0 0 1px rgba(255,255,255,.35),0 3px 14px rgba(0,0,0,.45),0 0 12px rgba(210,235,255,.22)!important}',
+        "body .card.focus .card__view::after,body .card.hover .card__view::after{content:\"\"!important;display:block!important;position:absolute!important;box-sizing:border-box!important;top:-15px!important;left:-15px!important;right:-15px!important;bottom:-15px!important;border:15px solid rgba(255,255,255,.13)!important;border-radius:31px!important;background:transparent!important;z-index:20!important;pointer-events:none!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.48),0 0 0 1px rgba(255,255,255,.56),0 5px 12px rgba(0,0,0,.18)!important}",
+        "@supports (-webkit-mask-composite:xor){body .card.focus .card__view::after,body .card.hover .card__view::after{border:0!important;padding:15px!important;background:linear-gradient(125deg,rgba(255,255,255,.48) 0%,rgba(255,255,255,.1) 19%,rgba(255,255,255,.035) 43%,rgba(255,255,255,.2) 74%,rgba(255,255,255,.4) 100%)!important;-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0)!important;-webkit-mask-composite:xor!important;mask-composite:exclude!important;-webkit-backdrop-filter:blur(6px) saturate(145%)!important;backdrop-filter:blur(6px) saturate(145%)!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.7)!important}}",
         '.card__title{font-weight:500!important}',
         '.menu{background-color:rgba(20,20,20,.96)}',
         '.menu__item{border-radius:12px}',
