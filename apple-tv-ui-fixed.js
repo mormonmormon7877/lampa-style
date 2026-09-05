@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 20: date and screensaver diagnostics. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 21: smooth screensaver fades and adaptive clock color. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -322,7 +322,7 @@
 
 })();
 
-/* Pause screensaver v20. Independent lifecycle; never changes the movie URL/time. */
+/* Pause screensaver v21. Independent lifecycle; never changes the movie URL/time. */
 (function () {
     'use strict';
     if (window.__applePauseSaver) window.__applePauseSaver.destroy();
@@ -330,7 +330,7 @@
     try { if (document.currentScript && document.currentScript.src) defaultManifest = new URL('screensavers/manifest.json',document.currentScript.src).href; } catch (ignore) {}
     var key = 'apple_pause_';
     var component = 'apple_pause_saver';
-    var delayTimer, mediaTimer, clockTimer, bootTimer, request;
+    var delayTimer, mediaTimer, clockTimer, bootTimer, request, fadeTimer;
     var overlay = null, media = null, clock = null, still = null, timeLabel = null, dateLabel = null, statusLabel = null;
     var lastError = '';
     var files = [], fileIndex = 0, failures = 0, generation = 0;
@@ -359,6 +359,33 @@
         } catch (ignore) {}
         return paused;
     }
+    function adaptClock() {
+        if (!clock || !media || (media.tagName === 'VIDEO' && media.readyState < 2)) return;
+        try {
+            var sample = document.createElement('canvas');sample.width = 16;sample.height = 16;
+            var ctx = sample.getContext('2d');ctx.drawImage(media,0,0,16,16);
+            var pixels = ctx.getImageData(0,0,16,16).data, light = 0;
+            for (var i=0;i<pixels.length;i+=4) light += pixels[i]*.2126 + pixels[i+1]*.7152 + pixels[i+2]*.0722;
+            clock.style.mixBlendMode = 'normal';
+            clock.style.color = light/256 > 145 ? '#000000' : '#ffffff';
+            clock.style.textShadow = light/256 > 145 ? '0 1px 8px rgba(255,255,255,.35)' : '0 2px 12px rgba(0,0,0,.65)';
+        } catch (ignore) {
+            // Cross-origin fallback: white difference text inverts the background.
+            clock.style.color = '#ffffff';clock.style.mixBlendMode = 'difference';clock.style.textShadow = 'none';
+        }
+    }
+    function revealMedia() {
+        adaptClock();
+        if (!still || still.style.display === 'none') return;
+        clearTimeout(fadeTimer);
+        still.style.transition = 'none';still.style.opacity = '1';
+        void still.offsetWidth;
+        still.style.transition = 'opacity 1.2s ease-in-out';still.style.opacity = '0';
+        var token = generation;
+        fadeTimer = setTimeout(function () {
+            if (generation === token && still) still.style.display = 'none';
+        },1250);
+    }
     function releaseMedia() {
         clearTimeout(mediaTimer);
         if (media) {
@@ -371,7 +398,7 @@
         }
     }
     function hide(rearm) {
-        generation++;
+        generation++;clearTimeout(fadeTimer);
         if (request) { request.abort(); request = null; }
         releaseMedia();
         clearInterval(clockTimer);
@@ -435,19 +462,20 @@
         xhr.send();
     }
     function nextMedia() {
+        clearTimeout(fadeTimer);
         // Keep a frame while releasing the decoder for the next clip.
         if (media && still && media.tagName === 'VIDEO' && media.readyState >= 2) {
             try {
                 still.width = Math.min(media.videoWidth,1920);
                 still.height = Math.round(still.width * media.videoHeight / media.videoWidth);
                 still.getContext('2d').drawImage(media,0,0,still.width,still.height);
-                still.style.display = 'block';
+                still.style.transition = 'none';still.style.opacity = '1';still.style.display = 'block';
             } catch (ignore) {}
         }
         releaseMedia();
         if (!overlay || !files.length || failures >= files.length) return;
         var entry = files[fileIndex++ % files.length];
-        if (statusLabel) statusLabel.textContent = 'Заставка v20 • ' + ((fileIndex - 1) % files.length + 1) + '/' + files.length + ' • Загрузка ' + entry.url.split('/').pop() + lastError;
+        if (statusLabel) statusLabel.textContent = 'Заставка v21 • ' + ((fileIndex - 1) % files.length + 1) + '/' + files.length + ' • Загрузка ' + entry.url.split('/').pop() + lastError;
         var item = media = document.createElement(entry.type === 'video' ? 'video' : 'img');
         item.style.cssText = 'position:absolute;inset:0;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none';
         var token = generation;
@@ -459,7 +487,17 @@
             // A failed video decoder must not affect the paused movie.
             nextMedia();
         }
-        item.onerror = failed;
+        var retried = false;
+        item.crossOrigin = 'anonymous';
+        item.onerror = function () {
+            if (media !== item || generation !== token) return;
+            if (!retried) {
+                retried = true;item.removeAttribute('crossorigin');item.src = entry.url;
+                if (entry.type === 'video') { var again = item.play();if (again && again.catch) again.catch(failed); }
+                return;
+            }
+            failed();
+        };
         overlay.insertBefore(item,clock);
         if (entry.type === 'video') {
             item.muted = true; item.defaultMuted = true; item.setAttribute('muted','');
@@ -469,8 +507,8 @@
                 if (media !== item) return;
                 clearTimeout(mediaTimer); failures = 0;
                 item.style.visibility = 'visible';
-                if (statusLabel) statusLabel.textContent = 'Заставка v20 • ' + ((fileIndex - 1) % files.length + 1) + '/' + files.length + ' • ' + entry.url.split('/').pop() + lastError;
-                if (still) still.style.display = 'none';
+                if (statusLabel) statusLabel.textContent = 'Заставка v21 • ' + ((fileIndex - 1) % files.length + 1) + '/' + files.length + ' • ' + entry.url.split('/').pop() + lastError;
+                revealMedia();
             };
             item.onended = function () { if (media === item) { failures = 0; nextMedia(); } };
             item.onloadeddata = function () { if (media === item) failures = 0; };
@@ -496,10 +534,10 @@
         overlay = document.createElement('div'); overlay.id = 'apple-pause-overlay';
         overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483000;background:#142337;background:radial-gradient(ellipse at 25% 35%,#254f60 0%,#192942 50%,#141c2d 100%);overflow:hidden;color:#b7bcc5';
         still = document.createElement('canvas');
-        still.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:none';
+        still.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:none;z-index:1;pointer-events:none';
         overlay.appendChild(still);
         clock = document.createElement('div');
-        clock.style.cssText = 'position:absolute;font:300 6vw Arial,sans-serif;text-shadow:0 2px 12px #000;z-index:1;pointer-events:none';
+        clock.style.cssText = 'position:absolute;font:300 6vw Arial,sans-serif;text-shadow:0 2px 12px #000;z-index:2;pointer-events:none;color:#fff;transition:color .8s ease,text-shadow .8s ease';
         timeLabel = document.createElement('div');
         dateLabel = document.createElement('div');
         dateLabel.style.cssText = 'font:300 2vw Arial,sans-serif;margin-top:.5em;white-space:nowrap';
@@ -509,7 +547,7 @@
         if (isPreview) {
             statusLabel = document.createElement('div');
             statusLabel.style.cssText = 'position:absolute;bottom:3%;left:3%;right:3%;z-index:2;font:18px Arial;color:white;background:rgba(0,0,0,.6);padding:12px';
-            statusLabel.textContent = 'Заставка v20';overlay.appendChild(statusLabel);
+            statusLabel.textContent = 'Заставка v21';overlay.appendChild(statusLabel);
         }
         document.body.appendChild(overlay);
         tick();clockTimer = setInterval(tick,1000);
