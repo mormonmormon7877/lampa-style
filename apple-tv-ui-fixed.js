@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 9: configurable glass interface. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 11: glass source selection. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -88,7 +88,7 @@
             // The existing mask clips the moving reflection to the ring only.
             var reflection = 'linear-gradient(110deg,transparent 35%,rgba(255,255,255,.48) 49%,transparent 63%)';
             var glass = 'linear-gradient(125deg,rgba(255,255,255,' + (.48 * gain).toFixed(3) + ') 0%,rgba(255,255,255,' + (.1 * gain).toFixed(3) + ') 19%,rgba(255,255,255,' + (.035 * gain).toFixed(3) + ') 43%,rgba(255,255,255,' + (.2 * gain).toFixed(3) + ') 74%,rgba(255,255,255,' + (.4 * gain).toFixed(3) + ') 100%)';
-            result += '\n@supports (-webkit-mask-composite:xor){' + ring + '{background-image:' + reflection + ',' + glass + '!important;background-size:300% 100%,100% 100%!important;background-repeat:no-repeat!important;background-position:-100% 0,0 0;-webkit-animation:atv-glass-shine .65s ease-out 1 both;animation:atv-glass-shine .65s ease-out 1 both;}}';
+            result += '\n@supports (-webkit-mask-composite:xor){' + ring + '{background-image:' + reflection + ',' + glass + '!important;background-size:300% 100%,100% 100%!important;background-repeat:no-repeat!important;background-position:-100% 0,0 0;-webkit-animation:atv-glass-shine 2s ease-out 1 both;animation:atv-glass-shine 2s ease-out 1 both;}}';
             result += '\n@-webkit-keyframes atv-glass-shine{from{background-position:150% 0,0 0}to{background-position:-100% 0,0 0}}@keyframes atv-glass-shine{from{background-position:150% 0,0 0}to{background-position:-100% 0,0 0}}';
         }
         if (pref('buttons') === 'true') {
@@ -96,6 +96,11 @@
             result += '\nbody .full-start__button.focus,body .full-start__button.hover{background:linear-gradient(125deg,rgba(255,255,255,.28),rgba(255,255,255,.06) 45%,rgba(255,255,255,.24))!important;color:#fff!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.65),0 3px 8px rgba(0,0,0,.18)!important;-webkit-backdrop-filter:blur(6px) saturate(145%);backdrop-filter:blur(6px) saturate(145%);}';
             result += '\nbody .full-start__button.loading.focus:before{-webkit-filter:none!important;filter:none!important;}';
         }
+        var sourceGlass = 'linear-gradient(125deg,rgba(255,255,255,' + (.28 * gain).toFixed(3) + ') 0%,rgba(255,255,255,' + (.09 * gain).toFixed(3) + ') 19%,rgba(255,255,255,' + (.035 * gain).toFixed(3) + ') 43%,rgba(255,255,255,' + (.12 * gain).toFixed(3) + ') 74%,rgba(255,255,255,' + (.24 * gain).toFixed(3) + ') 100%)';
+        result += '\nbody .selectbox .selectbox-item.focus,body .selectbox .selectbox-item.hover,body .online.focus,body .online.hover{background:' + sourceGlass + '!important;color:#fff!important;border-radius:16px!important;box-shadow:inset 0 0 0 1px rgba(255,255,255,.6),inset 0 1px 3px rgba(255,255,255,.16),0 3px 8px rgba(0,0,0,.15)!important;-webkit-backdrop-filter:blur(6px) saturate(145%)!important;backdrop-filter:blur(6px) saturate(145%)!important;}';
+        result += '\nbody .selectbox .selectbox-item.focus .selectbox-item__title,body .selectbox .selectbox-item.hover .selectbox-item__title{color:#fff!important;}';
+        result += '\nbody .selectbox .selectbox-item.focus .selectbox-item__checkbox,body .selectbox .selectbox-item.focus .settings-folder__icon{-webkit-filter:none!important;filter:none!important;}';
+        result += '\nbody .selectbox .selectbox-item.focus::after{border-color:#fff!important;}';
         result += '\nbody.no--animation .card__view,body.no--animation .card__view::after{-webkit-transition:none!important;transition:none!important;-webkit-animation:none!important;animation:none!important;}';
         result += '\n@media(prefers-reduced-motion:reduce){body .card__view,body .card__view::after{-webkit-transition:none!important;transition:none!important;-webkit-animation:none!important;animation:none!important;}}';
         css = result;
