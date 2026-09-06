@@ -1,4 +1,4 @@
-/* Apple-inspired styling for Lampa. Version 21: smooth screensaver fades and adaptive clock color. Standalone ES5 plugin. */
+/* Apple-inspired styling for Lampa. Version 22: native player navigation and bounded screensaver key capture. Standalone ES5 plugin. */
 (function () {
     'use strict';
     var id = 'lampa-apple-ui-fixed';
@@ -49,9 +49,6 @@
     var row = null;
     var dead = false;
     var bootAttempts = 0;
-    var controllerListener = null;
-    var panelController = null;
-    var originalPanelUp = null;
     var component = 'apple_glass';
     var prefix = 'apple_glass_';
     var options = [
@@ -62,8 +59,7 @@
         ['shine', 'Блик при выборе', {'true':'Включён','false':'Выключен'}, 'true'],
         ['dim', 'Затемнение соседних постеров', {'0':'Выключено','15':'Лёгкое — 15%','25':'Обычное — 25%','35':'Сильнее — 35%'}, '25'],
         ['buttons', 'Стеклянные кнопки фильма', {'true':'Включены','false':'Выключены'}, 'true'],
-        ['player', 'Стеклянный плеер', {'true':'Включён','false':'Выключен'}, 'true'],
-        ['remote', 'Меню плеера стрелкой вверх', {'true':'Качество, звук и режимы','false':'Штатное управление'}, 'true']
+        ['player', 'Стеклянный плеер', {'true':'Включён','false':'Выключен'}, 'true']
     ];
     function pref(name) {
         var spec;
@@ -157,88 +153,6 @@
         css = result;
         apply();
         refreshRow();
-        hookPlayer();
-    }
-    function restorePanel() {
-        if (panelController && panelController.up === playerUp) panelController.up = originalPanelUp;
-        panelController = null;
-        originalPanelUp = null;
-    }
-    function playerUp() {
-        if (!openPlayerMenu() && originalPanelUp) originalPanelUp.call(panelController);
-    }
-    function tell(message) {
-        if (window.Lampa && Lampa.Noty && Lampa.Noty.show) Lampa.Noty.show(message);
-    }
-    function nativePlayerAction(selector, title) {
-        Lampa.Controller.toggle('player_panel');
-        var button = document.querySelector('.player .player-panel ' + selector);
-        if (!button || button.classList.contains('hide')) {
-            tell(title + ': источник не передал доступные варианты.');
-            return;
-        }
-        try {
-            if (Lampa.Utils && Lampa.Utils.trigger) Lampa.Utils.trigger(button, 'hover:enter');
-            else if (window.$) window.$(button).trigger('hover:enter');
-            else { tell('Не удалось открыть штатное меню этой версии Lampa.'); return; }
-            if (Lampa.Select.opened && !Lampa.Select.opened()) tell(title + ': список вариантов недоступен для этого видео.');
-        } catch (error) { tell('Не удалось открыть: ' + title); }
-    }
-    function chooseGlassMode() {
-        Lampa.Select.show({title:'Режим стекла',items:[
-            {title:'Обычное стекло',value:'clear',selected:pref('tone') === 'clear'},
-            {title:'Тёмное стекло',value:'dark',selected:pref('tone') === 'dark'},
-            {title:'Дымчатое стекло',value:'smoke',selected:pref('tone') === 'smoke'}
-        ],onSelect:function (item) {
-            Lampa.Storage.set(prefix + 'tone',item.value);
-            render();
-            Lampa.Controller.toggle('player_panel');
-        },onBack:openPlayerMenu});
-    }
-    function openPlayerMenu() {
-        if (dead || !window.Lampa || !Lampa.Select || !Lampa.Select.show || !Lampa.Controller || !document.querySelector('.player .player-panel')) return false;
-        Lampa.Select.show({title:'Качество, звук и режимы',items:[
-            {title:'Качество видео',action:'quality'},
-            {title:'Звуковая дорожка / озвучка',action:'tracks'},
-            {title:'Субтитры',action:'subs'},
-            {title:'Источник / поток',action:'flow'},
-            {title:'Формат изображения и скорость',action:'settings'},
-            {title:'Режим стекла',action:'glass'},
-            {title:'Перемотка',action:'rewind'}
-        ],onSelect:function (item) {
-            if (item.action === 'glass') { chooseGlassMode(); return; }
-            if (item.action === 'rewind') {
-                Lampa.Controller.toggle('player_panel');
-                if (originalPanelUp) originalPanelUp.call(panelController);
-                return;
-            }
-            nativePlayerAction('.player-panel__' + item.action,item.title);
-        },onBack:function () { Lampa.Controller.toggle('player_panel'); }});
-        return true;
-    }
-    function hookPlayer() {
-        if (dead || !window.Lampa || !Lampa.Controller || !Lampa.Controller.enabled) return;
-        if (pref('remote') !== 'true' || !Lampa.Select || !Lampa.Select.show) {
-            restorePanel();
-            var hints = document.querySelectorAll('.atv-player-hint');
-            for (var i = 0; i < hints.length; i++) hints[i].parentNode.removeChild(hints[i]);
-            return;
-        }
-        var active = Lampa.Controller.enabled();
-        if (active.name !== 'player_panel' || !active.controller) return;
-        if (panelController !== active.controller) {
-            restorePanel();
-            panelController = active.controller;
-            originalPanelUp = panelController.up;
-            panelController.up = playerUp;
-        }
-        var body = document.querySelector('.player .player-panel__body');
-        if (body && !body.querySelector('.atv-player-hint')) {
-            var hint = document.createElement('div');
-            hint.className = 'atv-player-hint';
-            hint.textContent = '↑ Качество, звук и режимы • OK — выбрать • Назад — к видео';
-            body.appendChild(hint);
-        }
     }
     function refreshRow() {
         var next = null;
@@ -297,18 +211,12 @@
             }});
         }
         window.__appleGlassSettingsAdded = true;
-        if (!controllerListener && Lampa.Controller && Lampa.Controller.listener && Lampa.Controller.listener.follow) {
-            controllerListener = Lampa.Controller.listener;
-            controllerListener.follow('toggle',hookPlayer);
-        }
         render();
     }
     window.__lampaAppleGlass = {
         render:render,
         destroy:function () {
             dead = true;
-            if (controllerListener && controllerListener.remove) controllerListener.remove('toggle',hookPlayer);
-            restorePanel();
             var hints = document.querySelectorAll('.atv-player-hint');
             for (var i = 0; i < hints.length; i++) hints[i].parentNode.removeChild(hints[i]);
             clearTimeout(timer);
@@ -335,7 +243,7 @@
     var lastError = '';
     var files = [], fileIndex = 0, failures = 0, generation = 0;
     var paused = false, dead = false, preview = false, previous = '';
-    var swallowed = null, subscriptions = [], attempts = 0;
+    var swallowed = null, swallowedAt = 0, subscriptions = [], attempts = 0;
     var defaults = {delay:'120',mode:'clock',interval:'30',manifest:defaultManifest};
     var choices = {
         delay:{'0':'Выключена','30':'30 секунд','60':'1 минута','120':'2 минуты','300':'5 минут','600':'10 минут','900':'15 минут'},
@@ -566,13 +474,16 @@
     }
     function input(event) {
         var code = event.keyCode || event.which;
+        // A missing keyup must never leave a remote key blocked indefinitely.
+        if (swallowed !== null && (Date.now() - swallowedAt > 600 ||
+            (event.type === 'keydown' && code !== swallowed))) swallowed = null;
         if (event.type === 'keyup') {
             if (swallowed !== null && code === swallowed) { swallowed = null; event.preventDefault(); event.stopImmediatePropagation(); }
             return;
         }
         if (swallowed !== null && event.type === 'keydown' && code === swallowed) { event.preventDefault(); event.stopImmediatePropagation(); return; }
         if (overlay) {
-            if (event.type === 'keydown') swallowed = code;
+            if (event.type === 'keydown') { swallowed = code; swallowedAt = Date.now(); }
             event.preventDefault();event.stopImmediatePropagation();hide(true);
         } else arm();
     }
