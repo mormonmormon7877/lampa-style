@@ -9,14 +9,16 @@
     function endTV() {
         if (!tvSession) return;
         tvSession.active = false;
-        if (Lampa.Storage.field('player') === 'tizen') Lampa.Storage.set('player', tvSession.previousPlayer);
+        clearTimeout(tvSession.timer);
+        if (tvSession.restoreURL) tvSession.restoreURL();
+        if (Lampa.Storage.field('player') === tvSession.playerSetting) Lampa.Storage.set('player', tvSession.previousPlayer);
         tvSession = null;
     }
     function tvControls(video, manifest, metadata) {
         var api = window.webapis && window.webapis.avplay;
         if (!api || !Lampa.Storage || !Lampa.Player.listener) throw Error('Для управления звуком нужен Samsung-плеер в приложении Lampa.');
         endTV();
-        var session = {active:true, busy:false, rate:null, previousPlayer:Lampa.Storage.field('player')};
+        var session = {active:true, busy:false, rate:null, previousPlayer:Lampa.Storage.field('player'), playerSetting:'tizen'};
         tvSession = session;
         video.kinokradTV = session;
         var lines = manifest.split(/\r?\n/), levels = [], seen = {}, stream;
@@ -99,6 +101,74 @@
         // Restore this setting when this playback ends or another source starts.
         Lampa.Storage.set('player', 'tizen');
         video.launch_player = 'inner';
+        video.hls_type = 'native';
+    }
+    function launchTV(title, url, manifest, metadata, back, fallback, nativeFailure) {
+        var video = {url:url, title:title, launch_player:'inner'};
+        if (metadata && metadata.translate) video.translate = metadata.translate;
+        if (!fallback) tvControls(video, manifest, metadata);
+        else {
+            endTV();
+            tvSession = {active:true, previousPlayer:Lampa.Storage.field('player'), playerSetting:'inner'};
+            video.kinokradTV = tvSession;
+            video.hls_type = 'hlsjs';
+            video.hls_manifest_timeout = 12000;
+            video.hls_retry_timeout = 12000;
+            Lampa.Storage.set('player', 'inner');
+            // Lampa supplies HLS.js quality and audio controls after the manifest loads.
+        }
+        var session = tvSession, pv = Lampa.PlayerVideo;
+        session.fallback = !!fallback;
+        session.started = false;
+        function active() { return tvSession === session && session.active; }
+        function failure(reason) {
+            if (!active() || session.failed) return;
+            session.failed = true;
+            clearTimeout(session.timer);
+            var state = '';
+            if (!fallback) { try { state = ' / ' + window.webapis.avplay.getState(); } catch (e) {} }
+            var code = (fallback ? 'HTML' : 'SAMSUNG') + ': ' + reason + state;
+            Lampa.Player.close();
+            if (active()) endTV();
+            if (!fallback) {
+                notice('Samsung не запустил видео. Пробую резервный режим Lampa.');
+                launchTV(title, url, manifest, metadata, back, true, code);
+            } else {
+                fail('Видео не запустилось в двух режимах. Код: ' + nativeFailure + '; ' + code + '. Источник: ' + new URL(url).hostname, back);
+            }
+        }
+        session.arm = function () {
+            if (!active() || session.started) return;
+            clearTimeout(session.timer);
+            session.timer = setTimeout(function () { failure('нет воспроизведения за 25 секунд'); }, 25000);
+        };
+        session.progress = function (e) {
+            if (!active()) return;
+            var current = Number(e.current);
+            if (isFinite(current) && typeof session.lastTime === 'number' && current > session.lastTime) {
+                session.started = true;
+                clearTimeout(session.timer);
+            }
+            session.lastTime = current;
+        };
+        session.error = function (e) {
+            if (!active() || session.started || !e.fatal) return;
+            // Defer teardown until the current Lampa event has finished dispatching.
+            clearTimeout(session.timer);
+            session.timer = setTimeout(function () { failure(String(e.error || 'ошибка плеера').replace(/https?:\/\/\S+/g, '[адрес]')); }, 0);
+        };
+        if (!fallback && pv && typeof pv.url === 'function') {
+            var originalURL = pv.url;
+            var directURL = function (src, changeQuality) {
+                // Only this session's native stream skips Lampa's redundant HLS.js parser.
+                return originalURL.call(this, src, active() && src === url ? true : changeQuality);
+            };
+            pv.url = directURL;
+            session.restoreURL = function () { if (pv.url === directURL) pv.url = originalURL; };
+        }
+        Lampa.Select.hide();
+        try { Lampa.Player.play(video); Lampa.Player.playlist([video]); }
+        catch (e) { failure('ошибка запуска'); }
     }
     function isAndroid() { return Lampa.Platform.is('android'); }
     function isTizen() { return Lampa.Platform.is('tizen') || typeof window.tizen !== 'undefined'; }
@@ -322,12 +392,7 @@
         request(url, function (text) {
             if (String(text).indexOf('#EXTM3U') !== 0) return fail('Источник вернул неверный видеоплейлист.', back);
             if (isTizen()) {
-                var tvVideo = {url:url, title:title};
-                if (metadata && metadata.translate) tvVideo.translate = metadata.translate;
-                tvControls(tvVideo, String(text), metadata);
-                Lampa.Select.hide();
-                try { Lampa.Player.play(tvVideo); Lampa.Player.playlist([tvVideo]); }
-                catch (e) { endTV(); throw e; }
+                launchTV(title, url, String(text), metadata, back, false);
                 return;
             }
             var items = [{title:'Автоматически', url:url}];
@@ -368,17 +433,22 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.4.1 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.4.2 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.4.1', open:home};
+        window.kinokradPersonal = {version:'0.4.2', open:home};
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
             Lampa.Player.listener.follow('create', function (e) { if (tvSession && (!e.data || e.data.kinokradTV !== tvSession)) endTV(); });
+            Lampa.Player.listener.follow('ready', function (e) { if (tvSession && e && e.kinokradTV === tvSession && tvSession.arm) tvSession.arm(); });
+        }
+        if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
+            Lampa.PlayerVideo.listener.follow('timeupdate', function (e) { if (tvSession && tvSession.progress) tvSession.progress(e); });
+            Lampa.PlayerVideo.listener.follow('error', function (e) { if (tvSession && tvSession.error) tvSession.error(e); });
         }
         var button = $('<li class="menu__item selector"><div class="menu__ico"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h16v18H4zM6 5v3h3V5zm9 0v3h3V5zM6 16v3h3v-3zm9 0v3h3v-3zM10 9v6l5-3z"/></svg></div><div class="menu__text">Кінокрад</div></li>');
         button.on('hover:enter', home);
