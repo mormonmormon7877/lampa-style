@@ -4,6 +4,8 @@
     var SITE = 'https://kinokrad.im';
     var PLAYER = 'https://franko.uacdn.online';
     var serial = 0;
+    function isAndroid() { return Lampa.Platform.is('android'); }
+    function isTizen() { return Lampa.Platform.is('tizen') || typeof window.tizen !== 'undefined'; }
     function safe(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
     function menu(title, items, select, back) {
         Lampa.Select.show({title:safe(title), items:items, onSelect:select, onBack:back || home});
@@ -13,15 +15,36 @@
     }
     function request(url, callback, back, body) {
         var generation = ++serial;
-        var network = new Lampa.Reguest();
-        network.timeout(20000);
+        var network, xhr;
         menu('Кінокрад', [{title:'Загрузка…'}, {title:'Отмена'}], cancel, cancel);
-        function cancel() { serial++; network.clear(); (back || home)(); }
-        network.native(url, function (data) {
+        function cancel() { serial++; if (network) network.clear(); if (xhr) xhr.abort(); (back || home)(); }
+        function success(data) {
             if (generation !== serial) return;
             try { callback(data); } catch (e) { fail(e.message || 'Формат сайта изменился', back); }
-        }, function () { if (generation === serial) fail('Источник недоступен. Попробуйте позже.', back); }, body ? JSON.stringify(body) : false,
-        {dataType:'text', headers:body ? {'Content-Type':'application/json'} : {}, contentType:body ? 'application/json' : undefined});
+        }
+        function error(status) {
+            if (generation !== serial) return;
+            var host = new URL(url).hostname;
+            fail('Не удалось загрузить ' + host + (status ? ' (HTTP ' + status + ')' : '') +
+                (isTizen() && !status ? '. Проверьте доступ к сайту в вашей сборке Lampa и соединение ТВ.' : '. Попробуйте позже.'), back);
+        }
+        if (isAndroid()) {
+            network = new Lampa.Reguest();
+            network.timeout(20000);
+            network.native(url, success, function (e) { error(e && e.status); }, body ? JSON.stringify(body) : false,
+                {dataType:'text', headers:body ? {'Content-Type':'application/json'} : {}, contentType:body ? 'application/json' : undefined});
+        } else {
+            // Packaged Tizen apps use their configured network access policy.
+            // Do not rely on AndroidJS, browser fetch, or an unrelated public proxy.
+            xhr = new XMLHttpRequest();
+            xhr.open(body ? 'POST' : 'GET', url, true);
+            xhr.timeout = 20000;
+            if (body) xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.onload = function () { if (xhr.status >= 200 && xhr.status < 300) success(xhr.responseText); else error(xhr.status); };
+            xhr.onerror = function () { error(0); };
+            xhr.ontimeout = function () { error(0); };
+            xhr.send(body ? JSON.stringify(body) : null);
+        }
     }
     function documentOf(html) { return new DOMParser().parseFromString(html, 'text/html'); }
     function catalogItems(html) {
@@ -95,24 +118,50 @@
         request(PLAYER + '/api/player/files', function (raw) {
             var data = typeof raw === 'string' ? JSON.parse(raw) : raw;
             if (!data.file || !/^https:\/\//.test(data.file)) return fail('Источник не вернул видеоссылку.', back);
-            var video = {url:data.file, title:title};
-            Lampa.Select.hide();
-            Lampa.Player.play(video);
-            Lampa.Player.playlist([video]);
+            quality(title, data.file, back);
         }, back, {id:Number(p.id), translation:p.translate || null, season_number:p.season || null, episode_number:p.episode || null,
             force_cdn:p.force_cdn || '', turnstile_token:'', bootstrap_token:p.player_files_token || ''});
     }
+    function quality(title, url, back) {
+        request(url, function (text) {
+            if (String(text).indexOf('#EXTM3U') !== 0) return fail('Источник вернул неверный видеоплейлист.', back);
+            var items = [{title:'Автоматически', url:url}];
+            // Keep the master when it carries separate audio/subtitle renditions.
+            if (!/#EXT-X-MEDIA:/.test(text)) {
+                var lines = String(text).split(/\r?\n/), info = '';
+                lines.forEach(function (line) {
+                    line = line.trim();
+                    if (line.indexOf('#EXT-X-STREAM-INF:') === 0) info = line;
+                    else if (line && line.charAt(0) !== '#' && info) {
+                        var resolved = new URL(line, url), size = info.match(/RESOLUTION=(\d+)x(\d+)/);
+                        if (resolved.protocol === 'https:' && size) {
+                            var width = Number(size[1]);
+                            var label = width === 1920 ? '1080p' : width === 1280 ? '720p' : width === 854 ? '480p' : size[1] + '×' + size[2];
+                            items.push({title:label, url:resolved.href});
+                        }
+                        info = '';
+                    }
+                });
+            }
+            menu('Качество видео', items, function (item) {
+                var video = {url:item.url, title:title};
+                Lampa.Select.hide();
+                Lampa.Player.play(video);
+                Lampa.Player.playlist([video]);
+            }, back);
+        }, back);
+    }
     function home() {
         serial++;
-        if (!Lampa.Platform.is('android')) return fail('Эта версия рассчитана на приложение Lampa для Android.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад · личный источник', [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
+        menu('Кінокрад 0.2.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.1.0', open:home};
+        window.kinokradPersonal = {version:'0.2.0', open:home};
         var button = $('<li class="menu__item selector"><div class="menu__ico"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h16v18H4zM6 5v3h3V5zm9 0v3h3V5zM6 16v3h3v-3zm9 0v3h3v-3zM10 9v6l5-3z"/></svg></div><div class="menu__text">Кінокрад</div></li>');
         button.on('hover:enter', home);
         $('.menu .menu__list').eq(0).append(button);
