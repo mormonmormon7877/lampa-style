@@ -194,8 +194,82 @@
             showSources();
         }, back);
     }
+    function literal(html, pattern) {
+        var match = pattern.exec(html);
+        if (!match) return null;
+        var start = match.index + match[0].length, quote = html.charAt(start), i, c, escaped = false;
+        if (quote === "'" || quote === '"') {
+            var value = '';
+            for (i = start + 1; i < html.length; i++) {
+                c = html.charAt(i);
+                if (c === quote) return value;
+                if (c !== '\\') { value += c; continue; }
+                c = html.charAt(++i);
+                if (c === 'u' || c === 'x') {
+                    var count = c === 'u' ? 4 : 2, hex = html.substr(i + 1, count);
+                    if (!new RegExp('^[0-9a-fA-F]{' + count + '}$').test(hex)) throw Error('Неверная строка плейлиста.');
+                    value += String.fromCharCode(parseInt(hex, 16)); i += count;
+                } else if (c !== '\n' && c !== '\r') value += ({n:'\n', r:'\r', t:'\t', b:'\b', f:'\f'})[c] || c;
+            }
+        } else if (quote === '[' || quote === '{') {
+            var depth = 0, inString = false;
+            for (i = start; i < html.length; i++) {
+                c = html.charAt(i);
+                if (inString) {
+                    if (escaped) escaped = false;
+                    else if (c === '\\') escaped = true;
+                    else if (c === '"') inString = false;
+                } else if (c === '"') inString = true;
+                else if (c === '[' || c === '{') depth++;
+                else if (c === ']' || c === '}') { if (--depth === 0) return JSON.parse(html.slice(start, i + 1)); }
+            }
+        }
+        throw Error('Не удалось прочитать список серий источника.');
+    }
+    function trackMetadata(audio) {
+        return audio && Array.isArray(audio.names) && audio.names.length ?
+            {translate:{tracks:audio.names.map(function (name) { return {name:safe(name)}; })}} : {};
+    }
+    function nextSeasons(item, list, back) {
+        var available = list.filter(function (s) { return !s.blocked && Array.isArray(s.episodes) && s.episodes.length; });
+        available.sort(function (a,b) { return Number(a.season) - Number(b.season); });
+        if (!available.length) return fail('У источника нет доступных сезонов.', back);
+        menu(item.name + ' · сезон', available.map(function (s) { return {title:'Сезон ' + s.season, data:s}; }), function (selected) {
+            var season = selected.data;
+            function showEpisodes() {
+                var episodes = season.episodes.filter(function (e) { return !e.blocked && typeof e.hls === 'string' && /^https:\/\//.test(e.hls); });
+                if (!episodes.length) return fail('В этом сезоне нет доступных HLS-серий.', function () { nextSeasons(item, list, back); });
+                menu(item.name + ' · сезон ' + season.season, episodes.map(function (e) { return {title:'Серия ' + e.episode, data:e}; }), function (entry) {
+                    var e = entry.data;
+                    quality(item.name + ' · S' + season.season + ' E' + e.episode, e.hls, showEpisodes, trackMetadata(e.audio));
+                }, function () { nextSeasons(item, list, back); });
+            }
+            showEpisodes();
+        }, back);
+    }
+    function folderPlaylist(title, list, back, depth) {
+        if (depth > 8) return fail('Слишком много вложенных папок плейлиста.', back);
+        var entries = list.filter(function (entry) { return entry && (Array.isArray(entry.folder) || (typeof entry.file === 'string' && /^https:\/\/[^\s]+\.m3u8(?:[?#]|$)/.test(entry.file))); });
+        if (!entries.length) return fail('В этой папке нет доступных серий.', back);
+        function show() {
+            menu(title, entries.map(function (entry, index) { return {title:safe(entry.title || ('Серия ' + (index + 1))), data:entry}; }), function (selected) {
+                var entry = selected.data, name = title + ' · ' + String(entry.title || '').trim();
+                if (Array.isArray(entry.folder)) folderPlaylist(name, entry.folder, show, depth + 1);
+                else quality(name, entry.file, show);
+            }, back);
+        }
+        show();
+    }
     function extraSource(item, source, html, back) {
         // Parse only data literals. Never execute scripts from the source page.
+        if (source.type === 'next') {
+            var seasonsList = literal(html, /\bseasons\s*:\s*(?=\[)/);
+            if (Array.isArray(seasonsList)) return nextSeasons(item, seasonsList, back);
+        } else {
+            var file = literal(html, /\bfile\s*:\s*(?=['"\[])/);
+            var folders = typeof file === 'string' && /^\s*\[/.test(file) ? JSON.parse(file) : file;
+            if (Array.isArray(folders)) return folderPlaylist(item.name, folders, back, 0);
+        }
         var match = source.type === 'next' ? html.match(/\bhls\s*:\s*("(?:[^"\\]|\\.)*")/) : html.match(/\bfile\s*:\s*['"](https:\/\/[^'"\s]+\.m3u8[^'"\s]*)['"]/);
         if (!match) return fail('Этот формат плеера пока не поддерживается. Выберите другой источник.', back);
         var url = source.type === 'next' ? JSON.parse(match[1]) : match[1];
@@ -294,14 +368,14 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.4.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.4.1 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.4.0', open:home};
+        window.kinokradPersonal = {version:'0.4.1', open:home};
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
             Lampa.Player.listener.follow('create', function (e) { if (tvSession && (!e.data || e.data.kinokradTV !== tvSession)) endTV(); });
@@ -313,4 +387,5 @@
     if (window.appready) start();
     else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') start(); });
 })();
+
 
