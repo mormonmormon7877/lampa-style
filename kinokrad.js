@@ -170,25 +170,33 @@
                 });
             }
             menu('Качество видео', items, function (item) {
-                var video = {url:item.url, title:title};
-                if (metadata && metadata.translate) video.translate = metadata.translate;
-                Lampa.Select.hide();
-                Lampa.Player.play(video);
-                Lampa.Player.playlist([video]);
+                function launch(mode) {
+                    var video = {url:item.url, title:title};
+                    if (metadata && metadata.translate) video.translate = metadata.translate;
+                    if (mode) video.launch_player = mode;
+                    Lampa.Select.hide();
+                    Lampa.Player.play(video);
+                    Lampa.Player.playlist([video]);
+                }
+                if (isAndroid()) menu('Где открыть видео?', [
+                    {title:'В видеоприложении Android', subtitle:'Выберите установленный VLC, MX Player или другой плеер', mode:'android'},
+                    {title:'Внутри Lampa', subtitle:'Некоторые источники блокируют этот способ', mode:'inner'}
+                ], function (choice) { launch(choice.mode); }, function () { quality(title, url, back, metadata); });
+                else launch();
             }, back);
         }, back);
     }
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.3.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.3.1 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.3.0', open:home};
+        window.kinokradPersonal = {version:'0.3.1', open:home};
         var button = $('<li class="menu__item selector"><div class="menu__ico"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h16v18H4zM6 5v3h3V5zm9 0v3h3V5zM6 16v3h3v-3zm9 0v3h3v-3zM10 9v6l5-3z"/></svg></div><div class="menu__text">Кінокрад</div></li>');
         button.on('hover:enter', home);
         $('.menu .menu__list').eq(0).append(button);
