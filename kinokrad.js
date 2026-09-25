@@ -4,6 +4,102 @@
     var SITE = 'https://kinokrad.im';
     var PLAYER = 'https://franko.uacdn.online';
     var serial = 0;
+    var tvSession = null;
+    function notice(message) { if (Lampa.Noty) Lampa.Noty.show(message); }
+    function endTV() {
+        if (!tvSession) return;
+        tvSession.active = false;
+        if (Lampa.Storage.field('player') === 'tizen') Lampa.Storage.set('player', tvSession.previousPlayer);
+        tvSession = null;
+    }
+    function tvControls(video, manifest, metadata) {
+        var api = window.webapis && window.webapis.avplay;
+        if (!api || !Lampa.Storage || !Lampa.Player.listener) throw Error('Для управления звуком нужен Samsung-плеер в приложении Lampa.');
+        endTV();
+        var session = {active:true, busy:false, rate:null, previousPlayer:Lampa.Storage.field('player')};
+        tvSession = session;
+        video.kinokradTV = session;
+        var lines = manifest.split(/\r?\n/), levels = [], seen = {}, stream;
+        lines.forEach(function (line) {
+            if (line.indexOf('#EXT-X-STREAM-INF:') === 0) stream = line;
+            else if (stream && line && line.charAt(0) !== '#') {
+                var size = stream.match(/RESOLUTION=(\d+)x(\d+)/), rate = stream.match(/(?:[:,])BANDWIDTH=(\d+)/);
+                if (size && rate && !seen[size[1] + 'x' + size[2]]) {
+                    seen[size[1] + 'x' + size[2]] = true;
+                    var width = Number(size[1]);
+                    levels.push({title:width === 1920 ? '1080p' : width === 1280 ? '720p' : width === 854 ? '480p' : size[2] + 'p', rate:Number(rate[1])});
+                }
+                stream = null;
+            }
+        });
+        function active() { return session.active && tvSession === session; }
+        function selectAudio(index) {
+            if (!active() || session.busy) return notice('Дождитесь загрузки видео.');
+            var paused = false;
+            try {
+                var state = api.getState();
+                if (state !== 'PLAYING' && state !== 'PAUSED') throw Error('not playing');
+                var tracks = api.getTotalTrackInfo().filter(function (track) { return track.type === 'AUDIO'; }).sort(function (a,b) { return a.index-b.index; });
+                if (!tracks[index]) throw Error('track unavailable');
+                paused = state === 'PAUSED';
+                if (paused) api.play();
+                api.setSelectTrack('AUDIO', tracks[index].index);
+            } catch (e) { notice('Телевизор не смог переключить эту озвучку.'); }
+            finally { if (paused) { try { api.pause(); } catch (e) {} } }
+        }
+        function switchQuality(rate) {
+            if (!active() || session.busy) return notice('Дождитесь переключения качества.');
+            var state, position, audio, oldRate = session.rate;
+            try {
+                state = api.getState();
+                if (state !== 'PLAYING' && state !== 'PAUSED') throw Error('not playing');
+                position = api.getCurrentTime();
+                audio = api.getCurrentStreamInfo().filter(function (t) { return t.type === 'AUDIO'; })[0];
+            } catch (e) { return notice('Сначала дождитесь начала воспроизведения.'); }
+            session.busy = true;
+            function prepare(value, recovery) {
+                if (!active()) return;
+                try {
+                    api.stop(); // AVPlay must be IDLE before ADAPTIVE_INFO.
+                    var allRates = levels.map(function (l) { return l.rate; });
+                    var range = value || (Math.min.apply(Math, allRates) + '~' + Math.max.apply(Math, allRates));
+                    api.setStreamingProperty('ADAPTIVE_INFO', 'BITRATES=' + range);
+                    api.prepareAsync(function () {
+                        if (!active()) return;
+                        function resume() {
+                            if (!active()) return;
+                            try {
+                                api.play();
+                                if (audio) { try { api.setSelectTrack('AUDIO', audio.index); } catch (e) { notice('Проверьте выбранную озвучку после смены качества.'); } }
+                                if (state === 'PAUSED') api.pause();
+                                session.rate = value;
+                            } catch (e) { notice('Не удалось продолжить просмотр. Откройте фильм заново.'); }
+                            session.busy = false;
+                        }
+                        try { api.seekTo(position, resume, function () { notice('Не удалось восстановить позицию просмотра.'); resume(); }); }
+                        catch (e) { notice('Не удалось восстановить позицию просмотра.'); resume(); }
+                    }, function () { failed(recovery); });
+                } catch (e) { failed(recovery); }
+            }
+            function failed(recovery) {
+                if (!active()) return;
+                if (!recovery) { notice('Это качество недоступно. Возвращаю прежний режим.'); prepare(oldRate, true); }
+                else { session.busy = false; notice('Не удалось восстановить видео. Откройте фильм заново.'); }
+            }
+            prepare(rate, false);
+        }
+        if (levels.length) video.quality = [{title:'Автоматически', rate:null}].concat(levels).map(function (level) {
+            return {title:level.title, quality:level.rate ? level.title : 'auto', selected:!level.rate,
+                instance:{trigger:function () { switchQuality(level.rate); }}};
+        });
+        var names = metadata && metadata.translate && metadata.translate.tracks;
+        if (names && names.length) video.voiceovers = names.map(function (track, index) {
+            return {name:track.name, onSelect:function () { selectAudio(index); }};
+        });
+        // Restore this setting when this playback ends or another source starts.
+        Lampa.Storage.set('player', 'tizen');
+        video.launch_player = 'inner';
+    }
     function isAndroid() { return Lampa.Platform.is('android'); }
     function isTizen() { return Lampa.Platform.is('tizen') || typeof window.tizen !== 'undefined'; }
     function safe(s) { return String(s || '').replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -151,6 +247,15 @@
     function quality(title, url, back, metadata) {
         request(url, function (text) {
             if (String(text).indexOf('#EXTM3U') !== 0) return fail('Источник вернул неверный видеоплейлист.', back);
+            if (isTizen()) {
+                var tvVideo = {url:url, title:title};
+                if (metadata && metadata.translate) tvVideo.translate = metadata.translate;
+                tvControls(tvVideo, String(text), metadata);
+                Lampa.Select.hide();
+                try { Lampa.Player.play(tvVideo); Lampa.Player.playlist([tvVideo]); }
+                catch (e) { endTV(); throw e; }
+                return;
+            }
             var items = [{title:'Автоматически', url:url}];
             // Keep the master when it carries separate audio/subtitle renditions.
             if (!/#EXT-X-MEDIA:/.test(text)) {
@@ -189,14 +294,18 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.3.1 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.4.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.3.1', open:home};
+        window.kinokradPersonal = {version:'0.4.0', open:home};
+        if (Lampa.Player.listener) {
+            Lampa.Player.listener.follow('destroy', endTV);
+            Lampa.Player.listener.follow('create', function (e) { if (tvSession && (!e.data || e.data.kinokradTV !== tvSession)) endTV(); });
+        }
         var button = $('<li class="menu__item selector"><div class="menu__ico"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h16v18H4zM6 5v3h3V5zm9 0v3h3V5zM6 16v3h3v-3zm9 0v3h3v-3zM10 9v6l5-3z"/></svg></div><div class="menu__text">Кінокрад</div></li>');
         button.on('hover:enter', home);
         $('.menu .menu__list').eq(0).append(button);
