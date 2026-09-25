@@ -79,14 +79,40 @@
     function film(item, back) {
         request(item.url, function (html) {
             var buttons = documentOf(html).querySelectorAll('button[data-url]');
-            var embed;
+            var sources = [];
             Array.prototype.forEach.call(buttons, function (button) {
                 var u = new URL(button.getAttribute('data-url'), SITE);
-                if (u.origin === PLAYER && /^\/show\/kinopoisk\/\d+$/.test(u.pathname)) embed = u.href;
+                if (u.origin === PLAYER && /^\/show\/kinopoisk\/\d+$/.test(u.pathname)) sources.push({title:'Українською · выбор озвучки', url:u.href, type:'ua'});
+                else if (u.origin === 'https://api.nextembed.ws' && /^\/embed\/movie\/\d+$/.test(u.pathname)) sources.push({title:'Плеєр 2 · другие озвучки и оригинал', url:u.href, type:'next'});
+                else if (u.origin === 'https://ashdi.vip' && /^\/(vod|serial)\/\d+$/.test(u.pathname)) sources.push({title:'Плеєр 3 · дополнительный источник', url:u.href, type:'ashdi'});
             });
-            if (!embed) return fail('На этой странице нет поддерживаемого украинского плеера.', back);
-            request(embed, function (html) { translations(item, embed, payload(html), back); }, back);
+            if (!sources.length) return fail('На этой странице нет поддерживаемого плеера.', back);
+            function showSources() {
+                menu(item.name + ' · источник', sources, function (source) {
+                    request(source.url, function (html) {
+                        if (source.type === 'ua') translations(item, source.url, payload(html), showSources);
+                        else extraSource(item, source, html, showSources);
+                    }, showSources);
+                }, back);
+            }
+            showSources();
         }, back);
+    }
+    function extraSource(item, source, html, back) {
+        // Parse only data literals. Never execute scripts from the source page.
+        var match = source.type === 'next' ? html.match(/\bhls\s*:\s*("(?:[^"\\]|\\.)*")/) : html.match(/\bfile\s*:\s*['"](https:\/\/[^'"\s]+\.m3u8[^'"\s]*)['"]/);
+        if (!match) return fail('Этот формат плеера пока не поддерживается. Выберите другой источник.', back);
+        var url = source.type === 'next' ? JSON.parse(match[1]) : match[1];
+        if (!/^https:\/\//.test(url)) return fail('Источник не вернул видеоссылку.', back);
+        var metadata = {};
+        if (source.type === 'next') {
+            var audio = html.match(/\baudio\s*:\s*(\{[^\r\n]+\})\s*,/);
+            var names = audio ? JSON.parse(audio[1]).names : [];
+            if (Array.isArray(names) && names.length) metadata.translate = {tracks:names.map(function (name) { return {name:safe(name)}; })};
+        }
+        var entries = [{title:'Смотреть', subtitle:'Озвучка переключается в меню звуковых дорожек плеера'}];
+        if (metadata.translate) entries[0].subtitle += ': ' + metadata.translate.tracks.map(function (t) { return t.name; }).join(', ');
+        menu(item.name + ' · ' + (source.type === 'next' ? 'Плеєр 2' : 'Плеєр 3'), entries, function () { quality(item.name, url, back, metadata); }, back);
     }
     function translations(item, embed, p, back) {
         var items = (p.translations || []).map(function (t) { return {title:safe(t.title), id:t.id}; });
@@ -122,7 +148,7 @@
         }, back, {id:Number(p.id), translation:p.translate || null, season_number:p.season || null, episode_number:p.episode || null,
             force_cdn:p.force_cdn || '', turnstile_token:'', bootstrap_token:p.player_files_token || ''});
     }
-    function quality(title, url, back) {
+    function quality(title, url, back, metadata) {
         request(url, function (text) {
             if (String(text).indexOf('#EXTM3U') !== 0) return fail('Источник вернул неверный видеоплейлист.', back);
             var items = [{title:'Автоматически', url:url}];
@@ -145,6 +171,7 @@
             }
             menu('Качество видео', items, function (item) {
                 var video = {url:item.url, title:title};
+                if (metadata && metadata.translate) video.translate = metadata.translate;
                 Lampa.Select.hide();
                 Lampa.Player.play(video);
                 Lampa.Player.playlist([video]);
@@ -154,14 +181,14 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.2.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.3.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.2.0', open:home};
+        window.kinokradPersonal = {version:'0.3.0', open:home};
         var button = $('<li class="menu__item selector"><div class="menu__ico"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 3h16v18H4zM6 5v3h3V5zm9 0v3h3V5zM6 16v3h3v-3zm9 0v3h3v-3zM10 9v6l5-3z"/></svg></div><div class="menu__text">Кінокрад</div></li>');
         button.on('hover:enter', home);
         $('.menu .menu__list').eq(0).append(button);
