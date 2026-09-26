@@ -111,7 +111,7 @@
             endTV();
             tvSession = {active:true, previousPlayer:Lampa.Storage.field('player'), playerSetting:'inner'};
             video.kinokradTV = tvSession;
-            video.hls_type = 'hlsjs';
+            if (!metadata || metadata.format !== 'dash') video.hls_type = 'hlsjs';
             video.hls_manifest_timeout = 12000;
             video.hls_retry_timeout = 12000;
             Lampa.Storage.set('player', 'inner');
@@ -352,7 +352,49 @@
         }
         var entries = [{title:'Смотреть', subtitle:'Озвучка переключается в меню звуковых дорожек плеера'}];
         if (metadata.translate) entries[0].subtitle += ': ' + metadata.translate.tracks.map(function (t) { return t.name; }).join(', ');
-        menu(item.name + ' · ' + (source.type === 'next' ? 'Плеєр 2' : 'Плеєр 3'), entries, function () { quality(item.name, url, back, metadata); }, back);
+        var dash = source.type === 'next' ? literal(html, /\bdash\s*:\s*(?=")/) : null;
+        if (typeof dash === 'string' && /^https:\/\/[^\s]+\.mpd(?:[?#]|$)/.test(dash)) entries.push({title:'Смотреть в DASH · до Full HD', subtitle:'Дополнительные качества источника. Звук зависит от поддержки телевизором.', dash:true});
+        function showFormats() {
+            menu(item.name + ' · ' + (source.type === 'next' ? 'Плеєр 2' : 'Плеєр 3'), entries, function (entry) {
+                if (entry.dash) playDash(item.name, dash, metadata, showFormats);
+                else quality(item.name, url, back, metadata);
+            }, back);
+        }
+        showFormats();
+    }
+    function playDash(title, url, metadata, back) {
+        request(url, function (xml) {
+            var doc = new DOMParser().parseFromString(String(xml), 'text/xml');
+            if (!doc.getElementsByTagName('MPD').length || doc.getElementsByTagName('parsererror').length) return fail('Источник вернул неверный DASH-плейлист.', back);
+            var reps = Array.prototype.slice.call(doc.getElementsByTagName('Representation'));
+            var audio = [], video = [];
+            reps.forEach(function (rep) {
+                var parent = rep.parentNode;
+                var mime = rep.getAttribute('mimeType') || parent.getAttribute('mimeType') || '';
+                var codec = rep.getAttribute('codecs') || parent.getAttribute('codecs') || '';
+                var type = mime.split('/')[0] || parent.getAttribute('contentType');
+                if (type === 'audio') audio.push(mime + '; codecs="' + codec + '"');
+                if (type === 'video') video.push(mime + '; codecs="' + codec + '"');
+            });
+            if (!audio.length || !video.length) return fail('В DASH-плейлисте нет видео или звуковых дорожек.', back);
+            if (isTizen()) {
+                if (typeof dashjs === 'undefined') return fail('В этой сборке Lampa нет DASH-плеера. Обновите приложение или выберите «Смотреть».', back);
+                var mse = window.MediaSource;
+                if (mse && typeof mse.isTypeSupported === 'function') {
+                    var supports = function (types) { return types.some(function (type) { return mse.isTypeSupported(type); }); };
+                    if (!supports(audio)) return fail('Телевизор не поддерживает звук этого DASH-источника. Вернитесь и выберите «Смотреть» или Плеєр 3.', back);
+                    if (!supports(video)) return fail('Телевизор не поддерживает видео этого DASH-источника. Вернитесь и выберите «Смотреть» или Плеєр 3.', back);
+                }
+                launchTV(title, url, String(xml), {format:'dash', translate:metadata.translate}, back, true);
+            } else {
+                menu('Где открыть DASH?', [{title:'Внутри Lampa', mode:'inner'}, {title:'В видеоприложении Android', mode:'android'}], function (entry) {
+                    Lampa.Select.hide();
+                    var data = {url:url, title:title, launch_player:entry.mode};
+                    if (metadata.translate) data.translate = metadata.translate;
+                    Lampa.Player.play(data); Lampa.Player.playlist([data]);
+                }, back);
+            }
+        }, back);
     }
     function translations(item, embed, p, back) {
         var items = (p.translations || []).map(function (t) { return {title:safe(t.title), id:t.id}; });
@@ -434,14 +476,14 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.4.3 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.4.4 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.4.3', open:home};
+        window.kinokradPersonal = {version:'0.4.4', open:home};
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
             Lampa.Player.listener.follow('create', function (e) { if (tvSession && (!e.data || e.data.kinokradTV !== tvSession)) endTV(); });
