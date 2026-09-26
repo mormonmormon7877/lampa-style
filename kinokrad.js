@@ -134,7 +134,7 @@
                 notice('Samsung не запустил видео. Пробую резервный режим Lampa.');
                 launchTV(title, url, manifest, metadata, back, true, code);
             } else {
-                fail('Видео не запустилось в двух режимах. Код: ' + nativeFailure + '; ' + code + '. Источник: ' + new URL(url).hostname, back);
+                fail((nativeFailure ? 'Видео не запустилось в двух режимах. Код: ' + nativeFailure + '; ' : 'Видео не запустилось. Код: ') + code + '. Источник: ' + new URL(url).hostname, back);
             }
         }
         session.arm = function () {
@@ -392,7 +392,8 @@
         request(url, function (text) {
             if (String(text).indexOf('#EXTM3U') !== 0) return fail('Источник вернул неверный видеоплейлист.', back);
             if (isTizen()) {
-                launchTV(title, url, String(text), metadata, back, false);
+                // Start directly in the HLS.js mode confirmed working on Samsung NU7400.
+                launchTV(title, url, String(text), metadata, back, true);
                 return;
             }
             var items = [{title:'Автоматически', url:url}];
@@ -433,14 +434,14 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.4.2 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.4.3 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.4.2', open:home};
+        window.kinokradPersonal = {version:'0.4.3', open:home};
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
             Lampa.Player.listener.follow('create', function (e) { if (tvSession && (!e.data || e.data.kinokradTV !== tvSession)) endTV(); });
