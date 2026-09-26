@@ -5,11 +5,111 @@
     var PLAYER = 'https://franko.uacdn.online';
     var serial = 0;
     var tvSession = null;
+    var sourceContext = null;
+    var memoryCache = null;
+    function memory() {
+        if (!memoryCache) {
+            try { memoryCache = Lampa.Storage.get('kinokrad_memory_v1', {}); } catch (e) {}
+            if (!memoryCache || typeof memoryCache !== 'object' || Array.isArray(memoryCache)) memoryCache = {};
+            ['positions','preferences','sources','errors'].forEach(function (key) {
+                if (!memoryCache[key] || typeof memoryCache[key] !== 'object' || Array.isArray(memoryCache[key])) memoryCache[key] = {};
+            });
+        }
+        return memoryCache;
+    }
+    function saveMemory() {
+        var data = memory();
+        ['positions','preferences','sources','errors'].forEach(function (type) {
+            var keys = Object.keys(data[type]).sort(function (a,b) { return (data[type][b].updated || 0) - (data[type][a].updated || 0); });
+            keys.slice(60).forEach(function (key) { delete data[type][key]; });
+        });
+        try { Lampa.Storage.set('kinokrad_memory_v1', data); } catch (e) {}
+    }
+    function cleanError(value) { return String(value || 'ошибка плеера').replace(/https?:\/\/\S+/g, '[адрес]').slice(0,240); }
+    function timeLabel(seconds) { return Math.floor(seconds/60) + ':' + ('0' + Math.floor(seconds%60)).slice(-2); }
+    function playbackMemory(session, context, title, metadata, resumeAt) {
+        if (!context) return;
+        var store = memory(), positionKey = context.page + '|' + title;
+        var preferenceKey = context.page + '|' + context.source + '|' + (metadata && metadata.format || 'hls');
+        var preferred = store.preferences[preferenceKey] || {}, tracks, levels, trackBaseline, levelBaseline;
+        var latest = null, changed = false, lastWrite = 0, audioRestored = false, qualityRestored = false;
+        function audioName(t, i) {
+            var names = metadata && metadata.translate && metadata.translate.tracks;
+            return String(names && names[i] && names[i].name || t.name || t.language || t.lang || '').trim();
+        }
+        function levelName(l) { return l.width && l.height ? l.width + 'x' + l.height : String(l.title || ''); }
+        function selected(list, name) {
+            var value = '';
+            (list || []).forEach(function (item,i) { if (item.selected) value = name(item,i); });
+            return value;
+        }
+        session.tracks = function (e) {
+            tracks = e.tracks || [];
+            if (!audioRestored && preferred.audio) {
+                var matches = tracks.filter(function (t,i) { return audioName(t,i) === preferred.audio; });
+                if (matches.length === 1) { try { matches[0].enabled = true; tracks.forEach(function (t) { t.selected = t === matches[0]; }); audioRestored = true; } catch (err) {} }
+            }
+            trackBaseline = selected(tracks, audioName);
+        };
+        session.levels = function (e) {
+            levels = e.levels || [];
+            if (!qualityRestored && preferred.quality) {
+                var match = levels.filter(function (l) { return levelName(l) === preferred.quality; })[0];
+                if (match) { try { match.enabled = true; levels.forEach(function (l) { l.selected = l === match; }); qualityRestored = true; } catch (err) {} }
+            }
+            levelBaseline = selected(levels, levelName);
+        };
+        session.save = function (force) {
+            var audio = selected(tracks, audioName), quality = selected(levels, levelName);
+            if (audio && audio !== trackBaseline) { preferred.audio = audio; trackBaseline = audio; changed = true; }
+            if (quality && quality !== levelBaseline) { preferred.quality = quality; levelBaseline = quality; changed = true; }
+            var now = Date.now();
+            if (!force && !changed && now - lastWrite < 15000) return;
+            if (latest) store.positions[positionKey] = {position:latest.position, duration:latest.duration, updated:now};
+            if (changed) { preferred.updated = now; store.preferences[preferenceKey] = preferred; }
+            if (latest || changed) { saveMemory(); lastWrite = now; changed = false; }
+        };
+        session.rememberProgress = function (e) {
+            if (!session.started || !isFinite(e.current) || !isFinite(e.duration) || e.duration <= 0) return;
+            if (session.resumePending) return;
+            latest = {position:e.duration-e.current < 30 ? 0 : Math.max(0,Math.floor(e.current)), duration:e.duration};
+            if (!session.sourceRemembered) {
+                store.sources[context.page] = {source:context.source, updated:Date.now()};
+                session.sourceRemembered = true;
+            }
+            session.save(false);
+        };
+        session.resumePending = resumeAt > 0;
+        session.loaded = function (e) {
+            if (!session.resumePending || !(e.duration > 0)) return;
+            session.resumePending = false;
+            if (resumeAt < e.duration-10 && Lampa.PlayerVideo && Lampa.PlayerVideo.to) Lampa.PlayerVideo.to(resumeAt);
+            else notice('Сохранённая позиция не подходит этой версии видео. Запускаю с начала.');
+        };
+        session.recovery = function (reason) {
+            store.errors[context.page] = {source:context.source, mode:metadata && metadata.format || 'hls', reason:cleanError(reason), updated:Date.now()};
+            saveMemory();
+            menu('Кінокрад · воспроизведение прервано', [
+                {title:'Выбрать источник', subtitle:'Место просмотра сохранено, если оно было определено.', action:'source'},
+                {title:'Показать причину', action:'details'}, {title:'Назад', action:'back'}
+            ], function (a) {
+                if (a.action === 'details') showDiagnostics(context.page, context.showSources);
+                else if (a.action === 'source') context.showSources();
+                else context.back();
+            }, context.showSources);
+        };
+    }
+    function showDiagnostics(page, back) {
+        var error = memory().errors[page];
+        fail(error ? 'Источник: ' + error.source + ' · ' + error.mode.toUpperCase() + '. ' + error.reason : 'Сохранённых ошибок нет.', back);
+    }
     function notice(message) { if (Lampa.Noty) Lampa.Noty.show(message); }
     function endTV() {
         if (!tvSession) return;
+        if (tvSession.save) tvSession.save(true);
         tvSession.active = false;
         clearTimeout(tvSession.timer);
+        clearTimeout(tvSession.failureTimer);
         if (tvSession.restoreURL) tvSession.restoreURL();
         if (Lampa.Storage.field('player') === tvSession.playerSetting) Lampa.Storage.set('player', tvSession.previousPlayer);
         tvSession = null;
@@ -103,7 +203,17 @@
         video.launch_player = 'inner';
         video.hls_type = 'native';
     }
-    function launchTV(title, url, manifest, metadata, back, fallback, nativeFailure) {
+    function launchTV(title, url, manifest, metadata, back, fallback, nativeFailure, resumeAt) {
+        var context = sourceContext;
+        if (context && typeof resumeAt === 'undefined') {
+            var saved = memory().positions[context.page + '|' + title];
+            if (saved && saved.position >= 15) {
+                menu(title, [{title:'Продолжить с ' + timeLabel(saved.position), position:saved.position}, {title:'С начала', position:0}], function (entry) {
+                    launchTV(title, url, manifest, metadata, back, fallback, nativeFailure, entry.position);
+                }, back);
+                return;
+            }
+        }
         var video = {url:url, title:title, launch_player:'inner'};
         if (metadata && metadata.translate) video.translate = metadata.translate;
         if (!fallback) tvControls(video, manifest, metadata);
@@ -120,6 +230,7 @@
         var session = tvSession, pv = Lampa.PlayerVideo;
         session.fallback = !!fallback;
         session.started = false;
+        playbackMemory(session, context, title, metadata, resumeAt || 0);
         function active() { return tvSession === session && session.active; }
         function failure(reason) {
             if (!active() || session.failed) return;
@@ -128,12 +239,14 @@
             var state = '';
             if (!fallback) { try { state = ' / ' + window.webapis.avplay.getState(); } catch (e) {} }
             var code = (fallback ? 'HTML' : 'SAMSUNG') + ': ' + reason + state;
+            if (session.save) session.save(true);
             Lampa.Player.close();
             if (active()) endTV();
             if (!fallback) {
                 notice('Samsung не запустил видео. Пробую резервный режим Lampa.');
-                launchTV(title, url, manifest, metadata, back, true, code);
+                launchTV(title, url, manifest, metadata, back, true, code, resumeAt);
             } else {
+                if (session.recovery) return session.recovery(code);
                 fail((nativeFailure ? 'Видео не запустилось в двух режимах. Код: ' + nativeFailure + '; ' : 'Видео не запустилось. Код: ') + code + '. Источник: ' + new URL(url).hostname, back);
             }
         }
@@ -150,12 +263,15 @@
                 clearTimeout(session.timer);
             }
             session.lastTime = current;
+            if (session.loaded) session.loaded(e);
+            if (session.rememberProgress) session.rememberProgress(e);
         };
         session.error = function (e) {
-            if (!active() || session.started || !e.fatal) return;
+            if (!active() || !e.fatal || session.errorPending) return;
+            session.errorPending = true;
             // Defer teardown until the current Lampa event has finished dispatching.
             clearTimeout(session.timer);
-            session.timer = setTimeout(function () { failure(String(e.error || 'ошибка плеера').replace(/https?:\/\/\S+/g, '[адрес]')); }, 0);
+            session.failureTimer = setTimeout(function () { failure(cleanError(e.error)); }, 0);
         };
         if (!fallback && pv && typeof pv.url === 'function') {
             var originalURL = pv.url;
@@ -228,6 +344,7 @@
         return result;
     }
     function cardSearch(card) {
+        sourceContext = null;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', close);
         var title = card.title || card.name || '', year = String(card.release_date || card.first_air_date || '').slice(0,4);
         var queries = [], index = 0;
@@ -314,7 +431,15 @@
             });
             if (!sources.length) return fail('На этой странице нет поддерживаемого плеера.', back);
             function showSources() {
-                menu(item.name + ' · источник', sources, function (source) {
+                var remembered = memory().sources[item.url], ordered = sources.slice();
+                if (remembered) ordered.sort(function (a,b) { return Number(b.type === remembered.source) - Number(a.type === remembered.source); });
+                var choices = ordered.map(function (s) {
+                    return {title:s.title, subtitle:s.subtitle + (remembered && s.type === remembered.source ? ' · последний рабочий' : ''), url:s.url, type:s.type};
+                });
+                if (memory().errors[item.url]) choices.push({title:'Последняя ошибка', diagnostics:true});
+                menu(item.name + ' · источник', choices, function (source) {
+                    if (source.diagnostics) return showDiagnostics(item.url, showSources);
+                    sourceContext = {page:item.url, source:source.type, showSources:showSources, back:back};
                     request(source.url, function (html) {
                         if (source.type === 'ua') translations(item, source.url, payload(html), showSources);
                         else extraSource(item, source, html, showSources);
@@ -536,14 +661,14 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.5.1 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.6.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.5.1', open:home};
+        window.kinokradPersonal = {version:'0.6.0', open:home};
         if (Lampa.Listener) Lampa.Listener.follow('full', cardButton);
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
@@ -553,6 +678,10 @@
         if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
             Lampa.PlayerVideo.listener.follow('timeupdate', function (e) { if (tvSession && tvSession.progress) tvSession.progress(e); });
             Lampa.PlayerVideo.listener.follow('error', function (e) { if (tvSession && tvSession.error) tvSession.error(e); });
+            Lampa.PlayerVideo.listener.follow('tracks', function (e) { if (tvSession && tvSession.tracks) tvSession.tracks(e); });
+            Lampa.PlayerVideo.listener.follow('levels', function (e) { if (tvSession && tvSession.levels) tvSession.levels(e); });
+            Lampa.PlayerVideo.listener.follow('loadeddata', function (e) { if (tvSession && tvSession.loaded) tvSession.loaded(e); });
+            Lampa.PlayerVideo.listener.follow('destroy', function () { if (tvSession && tvSession.save) tvSession.save(true); });
         }
     }
     if (window.appready) start();
