@@ -220,9 +220,69 @@
             if (url.origin !== SITE || seen[url.href]) return;
             seen[url.href] = true;
             var title = a.getAttribute('title') || a.textContent.trim();
-            result.push({title:safe(title), url:url.href, name:title});
+            var container = a.closest('.kino-card'), yearLink = container && container.querySelector('.kino-card-year, .card-title-year, a[href*="/xfsearch/year/"]');
+            var yearMatch = yearLink && String(yearLink.getAttribute('title') || yearLink.textContent).match(/\b(?:19|20)\d{2}\b/);
+            var year = yearMatch ? yearMatch[0] : '';
+            result.push({title:safe(title), subtitle:safe(year), year:year, url:url.href, name:title});
         });
         return result;
+    }
+    function cardSearch(card) {
+        if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', close);
+        var title = card.title || card.name || '', year = String(card.release_date || card.first_air_date || '').slice(0,4);
+        var queries = [], index = 0;
+        function close() { serial++; clearTimeout(timer); Lampa.Select.hide(); Lampa.Controller.toggle('full_start'); }
+        function add(q) { q = String(q || '').trim(); if (q && queries.indexOf(q) === -1) queries.push(q); }
+        function edit() {
+            serial++;
+            Lampa.Input.edit({title:'Название на украинском', value:queries[0] || title, free:true, nosave:true}, function (q) {
+                if (!q || !q.trim()) return close();
+                queries = []; index = 0; add(q); search();
+            });
+        }
+        function search() {
+            var q = queries[index++];
+            if (!q) return menu('Совпадений нет · ' + title, [{title:'Изменить название', edit:true}, {title:'Назад'}], function (a) { if (a.edit) edit(); else close(); }, close);
+            request(SITE + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(q), function (html) {
+                var found = catalogItems(html);
+                if (!found.length) return search();
+                if (year) found.sort(function (a,b) { return Number(b.year === year) - Number(a.year === year); });
+                var choices = found.concat([{title:'Изменить название', edit:true}]);
+                function results() {
+                    menu('Выберите совпадение · ' + title + (year ? ' (' + year + ')' : ''), choices, function (a) {
+                        if (a.edit) edit(); else film(a, results);
+                    }, close);
+                }
+                results();
+            }, close);
+        }
+        var tmdb = Lampa.Api && Lampa.Api.sources && Lampa.Api.sources.tmdb;
+        if (card.source === 'tmdb' && /^\d+$/.test(String(card.id)) && tmdb && typeof tmdb.get === 'function') {
+            var generation = ++serial, finished = false, timer;
+            function finish(localized) {
+                if (finished || generation !== serial) return;
+                finished = true; clearTimeout(timer);
+                add(localized && (localized.title || localized.name)); add(title); add(card.original_title || card.original_name); search();
+            }
+            menu('Ищу название · ' + title, [{title:'Отмена'}], close, close);
+            timer = setTimeout(function () { finish(); }, 10000);
+            try { tmdb.get((card.name || card.first_air_date || card.media_type === 'tv' ? 'tv/' : 'movie/') + card.id, {langs:'uk'}, finish, function () { finish(); }); }
+            catch (e) { finish(); }
+        } else { add(title); add(card.original_title || card.original_name); search(); }
+    }
+    function cardButton(e) {
+        if (!e || e.type !== 'complite' || !e.data || !e.data.movie) return;
+        var root = e.body || (e.object && e.object.activity && e.object.activity.render());
+        if (!root || typeof root.find !== 'function' || root.find('.kinokrad-online-button').length) return;
+        var buttons = root.find('.full-start-new__buttons, .full-start__buttons').eq(0);
+        if (!buttons.length) return;
+        var grouped = buttons.find('.buttons--container').eq(0);
+        if (grouped.length) buttons = grouped;
+        var card = e.data.movie;
+        if (!card.source && e.object && e.object.source) { card = Object.assign({}, card, {source:e.object.source}); }
+        var button = $('<div class="full-start__button selector kinokrad-online-button"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Онлайн · Кінокрад</span></div>');
+        button.on('hover:enter', function () { cardSearch(card); });
+        buttons.append(button);
     }
     function catalog(path, page, query) {
         var url = query ? SITE + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query) : SITE + path + (page > 1 ? 'page/' + page + '/' : '');
@@ -248,9 +308,9 @@
             var sources = [];
             Array.prototype.forEach.call(buttons, function (button) {
                 var u = new URL(button.getAttribute('data-url'), SITE);
-                if (u.origin === PLAYER && /^\/show\/kinopoisk\/\d+$/.test(u.pathname)) sources.push({title:'Українською · выбор озвучки', url:u.href, type:'ua'});
-                else if (u.origin === 'https://api.nextembed.ws' && /^\/embed\/movie\/\d+$/.test(u.pathname)) sources.push({title:'Плеєр 2 · другие озвучки и оригинал', url:u.href, type:'next'});
-                else if (u.origin === 'https://ashdi.vip' && /^\/(vod|serial)\/\d+$/.test(u.pathname)) sources.push({title:'Плеєр 3 · дополнительный источник', url:u.href, type:'ashdi'});
+                if (u.origin === PLAYER && /^\/show\/kinopoisk\/\d+$/.test(u.pathname)) sources.push({title:'Українською · выбор озвучки', subtitle:'Franko / UACDN · украинские озвучки', url:u.href, type:'ua'});
+                else if (u.origin === 'https://api.nextembed.ws' && /^\/embed\/movie\/\d+$/.test(u.pathname)) sources.push({title:'Плеєр 2 · другие озвучки и оригинал', subtitle:'NextEmbed · HLS, дополнительный DASH для фильмов', url:u.href, type:'next'});
+                else if (u.origin === 'https://ashdi.vip' && /^\/(vod|serial)\/\d+$/.test(u.pathname)) sources.push({title:'Плеєр 3 · дополнительный источник', subtitle:'Ashdi · фильмы, переводы и серии', url:u.href, type:'ashdi'});
             });
             if (!sources.length) return fail('На этой странице нет поддерживаемого плеера.', back);
             function showSources() {
@@ -476,14 +536,15 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.4.4 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.5.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.4.4', open:home};
+        window.kinokradPersonal = {version:'0.5.0', open:home};
+        if (Lampa.Listener) Lampa.Listener.follow('full', cardButton);
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
             Lampa.Player.listener.follow('create', function (e) { if (tvSession && (!e.data || e.data.kinokradTV !== tvSession)) endTV(); });
