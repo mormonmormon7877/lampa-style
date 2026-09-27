@@ -7,6 +7,45 @@
     var tvSession = null;
     var sourceContext = null;
     var memoryCache = null;
+    var VERSION = '0.7.0';
+    function options() {
+        var data = memory();
+        if (!data.options || typeof data.options !== 'object') data.options = {autoplay:false, favorite:''};
+        return data.options;
+    }
+    function sameVoice(a,b) { return String(a || '').replace(/&amp;/g,'&').trim().toLowerCase() === String(b || '').replace(/&amp;/g,'&').trim().toLowerCase(); }
+    function hub(back) {
+        menu('Кінокрад · моё меню', [{title:'Продолжить просмотр', action:'history'}, {title:'Настройки', action:'settings'}], function (a) {
+            if (a.action === 'history') historyMenu(function () { hub(back); });
+            else settingsMenu(function () { hub(back); });
+        }, back);
+    }
+    function settingsMenu(back) {
+        var opts = options();
+        function again() { settingsMenu(back); }
+        menu('Кінокрад ' + VERSION, [
+            {title:'Следующая серия автоматически: ' + (opts.autoplay ? 'вкл' : 'выкл'), action:'auto'},
+            {title:'Избранная озвучка: ' + safe(opts.favorite || 'не выбрана'), action:'voice'},
+            {title:'Очистить историю просмотра', action:'clear'}, {title:'Сбросить сохранённое качество', action:'quality'}
+        ], function (a) {
+            if (a.action === 'auto') { opts.autoplay = !opts.autoplay; saveMemory(); again(); }
+            else if (a.action === 'voice') Lampa.Input.edit({title:'Точное название озвучки (пусто — выключить)', value:opts.favorite || '', free:true, nosave:true}, function (value) { opts.favorite = String(value || '').trim().slice(0,100); saveMemory(); again(); });
+            else if (a.action === 'quality') { Object.keys(memory().preferences).forEach(function (key) { delete memory().preferences[key].quality; }); saveMemory(); notice('Сохранённое качество сброшено.'); again(); }
+            else menu('Очистить историю просмотра?', [{title:'Очистить', clear:true}, {title:'Отмена'}], function (choice) { if (choice.clear) { memory().positions = {}; saveMemory(); } again(); }, again);
+        }, back);
+    }
+    function historyMenu(back) {
+        var positions = memory().positions;
+        var list = Object.keys(positions).map(function (key) { return positions[key]; }).filter(function (entry) { return entry.position >= 15 && entry.page && entry.route && entry.title; });
+        list.sort(function (a,b) { return b.updated-a.updated; });
+        if (!list.length) return fail('Пока нет недосмотренных видео, сохранённых новой версией.', back);
+        menu('Продолжить просмотр', list.map(function (entry) { return {title:safe(entry.title), subtitle:timeLabel(entry.position) + ' · ' + entry.source, data:entry}; }), function (a) {
+            var entry = a.data;
+            try { if (new URL(entry.page).origin !== SITE) throw Error(); }
+            catch (e) { return fail('Адрес записи недоступен.', back); }
+            film({url:entry.page, name:entry.name || entry.title}, function () { historyMenu(back); }, entry);
+        }, back);
+    }
     function memory() {
         if (!memoryCache) {
             try { memoryCache = Lampa.Storage.get('kinokrad_memory_v1', {}); } catch (e) {}
@@ -45,8 +84,9 @@
         }
         session.tracks = function (e) {
             tracks = e.tracks || [];
-            if (!audioRestored && preferred.audio) {
-                var matches = tracks.filter(function (t,i) { return audioName(t,i) === preferred.audio; });
+            var wanted = preferred.audio || options().favorite;
+            if (!audioRestored && wanted) {
+                var matches = tracks.filter(function (t,i) { return sameVoice(audioName(t,i), wanted); });
                 if (matches.length === 1) { try { matches[0].enabled = true; tracks.forEach(function (t) { t.selected = t === matches[0]; }); audioRestored = true; } catch (err) {} }
             }
             trackBaseline = selected(tracks, audioName);
@@ -65,11 +105,12 @@
             if (quality && quality !== levelBaseline) { preferred.quality = quality; levelBaseline = quality; changed = true; }
             var now = Date.now();
             if (!force && !changed && now - lastWrite < 15000) return;
-            if (latest) store.positions[positionKey] = {position:latest.position, duration:latest.duration, updated:now};
+            if (latest) store.positions[positionKey] = {position:latest.position, duration:latest.duration, updated:now, page:context.page, name:context.name || title, title:title, source:context.source, route:context.route || null};
             if (changed) { preferred.updated = now; store.preferences[preferenceKey] = preferred; }
             if (latest || changed) { saveMemory(); lastWrite = now; changed = false; }
         };
         session.describeControls = function () { return {audio:selected(tracks, audioName), quality:selected(levels, levelName)}; };
+        session.completeEpisode = function () { if (latest) { latest.position = 0; session.save(true); } };
         session.rememberProgress = function (e) {
             if (!session.started || !isFinite(e.current) || !isFinite(e.duration) || e.duration <= 0) return;
             if (session.resumePending) return;
@@ -106,7 +147,7 @@
     }
     function soundTools(session, context, title, url, manifest, metadata, back, fallback) {
         if (!context) return;
-        var button, media, events = [], bindings = [], mode = metadata && metadata.format || 'hls';
+        var button, extraButtons = [], media, events = [], bindings = [], mode = metadata && metadata.format || 'hls';
         function active() { return tvSession === session && session.active; }
         function currentMedia() { try { return Lampa.PlayerVideo.video(); } catch (e) { return null; } }
         function position() {
@@ -143,6 +184,29 @@
             return lines;
         }
         function returnPlayer() { if (active()) Lampa.Controller.toggle('player_panel'); }
+        function leavePlayback(action) {
+            if (!active() || session.restarting) return;
+            session.restarting = true;
+            var element = currentMedia();
+            if (session.rememberProgress && element) session.rememberProgress({current:position(), duration:element.duration});
+            if (session.save) session.save(true);
+            Lampa.Player.close();
+            if (active()) endTV();
+            sourceContext = Object.assign({}, context);
+            action();
+        }
+        session.changeSource = function () { leavePlayback(context.showSources); };
+        session.nextEpisode = function () {
+            if (!context.nextRoute) return;
+            leavePlayback(function () { playRoute(context.nextRoute, context.showSources); });
+        };
+        session.ended = function () {
+            if (!active()) return;
+            if (session.completeEpisode) session.completeEpisode();
+            if (context.nextRoute && options().autoplay === true && !session.autoTimer) {
+                session.autoTimer = setTimeout(function () { if (active()) session.nextEpisode(); }, 1000);
+            }
+        };
         session.restartSound = function () {
             if (!active() || session.restarting) return;
             session.restarting = true;
@@ -159,7 +223,8 @@
             if (!active()) return;
             menu('Кінокрад · звук', [
                 {title:'Перезапустить с ' + timeLabel(position()), action:'restart'},
-                {title:'Диагностика звука', action:'diagnostics'}, {title:'Назад', action:'back'}
+                {title:'Диагностика звука', action:'diagnostics'},
+                {title:'Сделать текущую озвучку избранной', action:'favorite'}, {title:'Назад', action:'back'}
             ], function (choice) {
                 if (!active()) return;
                 if (choice.action === 'restart') session.restartSound();
@@ -167,6 +232,11 @@
                     var lines = snapshot(false).map(function (line) { return {title:safe(line)}; });
                     lines.push({title:'Назад'});
                     menu('Звук · ' + context.source + ' · ' + mode.toUpperCase(), lines, session.soundMenu, session.soundMenu);
+                } else if (choice.action === 'favorite') {
+                    var audio = session.describeControls && session.describeControls().audio;
+                    if (audio) { options().favorite = audio; saveMemory(); notice('Избранная озвучка: ' + audio); }
+                    else notice('Плеер ещё не сообщил название озвучки.');
+                    returnPlayer();
                 } else returnPlayer();
             }, returnPlayer);
         };
@@ -188,9 +258,16 @@
             if (!target.length) return;
             button = $('<div class="player-panel__button button selector kinokrad-sound" style="padding:0 0.6em;white-space:nowrap" title="Диагностика и перезапуск звука">Звук</div>');
             button.on('hover:enter', session.soundMenu); target.append(button);
+            function addButton(label, action) {
+                var extra = $('<div class="player-panel__button button selector" style="padding:0 0.6em;white-space:nowrap"></div>');
+                extra.text(label).on('hover:enter', action); target.append(extra); extraButtons.push(extra);
+            }
+            addButton('Источник', session.changeSource);
+            if (context.nextRoute) addButton('Серия →', session.nextEpisode);
         };
         session.cleanupSound = function () {
             if (button) button.remove();
+            extraButtons.forEach(function (extra) { extra.remove(); });
             if (media && typeof media.removeEventListener === 'function') bindings.forEach(function (binding) { media.removeEventListener(binding.name,binding.handler); });
             bindings = [];
         };
@@ -203,6 +280,7 @@
         tvSession.active = false;
         clearTimeout(tvSession.timer);
         clearTimeout(tvSession.failureTimer);
+        clearTimeout(tvSession.autoTimer);
         if (tvSession.restoreURL) tvSession.restoreURL();
         if (Lampa.Storage.field('player') === tvSession.playerSetting) Lampa.Storage.set('player', tvSession.previousPlayer);
         tvSession = null;
@@ -297,7 +375,7 @@
         video.hls_type = 'native';
     }
     function launchTV(title, url, manifest, metadata, back, fallback, nativeFailure, resumeAt) {
-        var context = sourceContext;
+        var context = sourceContext ? Object.assign({}, sourceContext) : null;
         if (context && typeof resumeAt === 'undefined') {
             var saved = memory().positions[context.page + '|' + title];
             if (saved && saved.position >= 15) {
@@ -494,6 +572,9 @@
         var button = $('<div class="full-start__button selector kinokrad-online-button"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7z"/></svg><span>Онлайн · Кінокрад</span></div>');
         button.on('hover:enter', function () { cardSearch(card); });
         buttons.append(button);
+        var toolsButton = $('<div class="full-start__button selector kinokrad-tools-button"><span>Кінокрад · меню</span></div>');
+        toolsButton.on('hover:enter', function () { hub(function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('full_start'); }); });
+        buttons.append(toolsButton);
     }
     function catalog(path, page, query) {
         var url = query ? SITE + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query) : SITE + path + (page > 1 ? 'page/' + page + '/' : '');
@@ -513,7 +594,7 @@
         if (!match) throw Error('Этот плеер пока не поддерживается.');
         return JSON.parse(match[1]);
     }
-    function film(item, back) {
+    function film(item, back, restore) {
         request(item.url, function (html) {
             var buttons = documentOf(html).querySelectorAll('button[data-url]');
             var sources = [];
@@ -524,6 +605,14 @@
                 else if (u.origin === 'https://ashdi.vip' && /^\/(vod|serial)\/\d+$/.test(u.pathname)) sources.push({title:'Плеєр 3 · дополнительный источник', subtitle:'Ashdi · фильмы, переводы и серии', url:u.href, type:'ashdi'});
             });
             if (!sources.length) return fail('На этой странице нет поддерживаемого плеера.', back);
+            function chooseSource(source, route) {
+                sourceContext = {page:item.url, name:item.name, source:source.type, embed:source.url, showSources:showSources, back:back, route:{kind:'movie', format:'hls'}};
+                if (route) return playRoute(route, showSources);
+                request(source.url, function (html) {
+                    if (source.type === 'ua') translations(item, source.url, payload(html), showSources);
+                    else extraSource(item, source, html, showSources);
+                }, showSources);
+            }
             function showSources() {
                 var remembered = memory().sources[item.url], ordered = sources.slice();
                 if (remembered) ordered.sort(function (a,b) { return Number(b.type === remembered.source) - Number(a.type === remembered.source); });
@@ -533,12 +622,13 @@
                 if (memory().errors[item.url]) choices.push({title:'Последняя ошибка', diagnostics:true});
                 menu(item.name + ' · источник', choices, function (source) {
                     if (source.diagnostics) return showDiagnostics(item.url, showSources);
-                    sourceContext = {page:item.url, source:source.type, showSources:showSources, back:back};
-                    request(source.url, function (html) {
-                        if (source.type === 'ua') translations(item, source.url, payload(html), showSources);
-                        else extraSource(item, source, html, showSources);
-                    }, showSources);
+                    chooseSource(source);
                 }, back);
+            }
+            if (restore) {
+                var match = sources.filter(function (source) { return source.type === restore.source; })[0];
+                if (match) return chooseSource(match, restore.route);
+                notice('Сохранённый источник недоступен. Выберите другой.');
             }
             showSources();
         }, back);
@@ -579,6 +669,69 @@
         return audio && Array.isArray(audio.names) && audio.names.length ?
             {translate:{tracks:audio.names.map(function (name) { return {name:safe(name)}; })}} : {};
     }
+    function setRoute(route, next) {
+        if (sourceContext) { sourceContext.route = route; sourceContext.nextRoute = next || null; }
+    }
+    function nextRoutes(list) {
+        var result = [];
+        list.filter(function (s) { return !s.blocked && Array.isArray(s.episodes); }).sort(function (a,b) { return Number(a.season)-Number(b.season); }).forEach(function (s) {
+            s.episodes.filter(function (e) { return !e.blocked && /^https:\/\//.test(e.hls || ''); }).slice().sort(function (a,b) { return Number(a.episode)-Number(b.episode); }).forEach(function (e) { result.push({route:{kind:'next', season:String(s.season), episode:String(e.episode)}, data:e}); });
+        });
+        return result;
+    }
+    function uaRoutes(p, translation) {
+        var result = [];
+        Object.keys(p.seasons_episodes || {}).sort(function (a,b) { return Number(a)-Number(b); }).forEach(function (s) {
+            (p.seasons_episodes[s] || []).slice().sort(function (a,b) { return Number(a)-Number(b); }).forEach(function (e) { result.push({kind:'ua', translation:translation, season:String(s), episode:String(e)}); });
+        });
+        return result;
+    }
+    function folderRoutes(list, path, group, result) {
+        if (path.length > 8) return result;
+        list.forEach(function (entry) {
+            var title = String(entry.title || '').trim(), nextPath = path.concat([title]);
+            var nextGroup = !path.length && !/^(?:сезон|season)\s*\d/i.test(title) ? title : group;
+            if (Array.isArray(entry.folder)) folderRoutes(entry.folder, nextPath, nextGroup, result);
+            else if (/^https:\/\/[^\s]+\.m3u8(?:[?#]|$)/.test(entry.file || '')) result.push({route:{kind:'folder', path:nextPath}, group:nextGroup, data:entry});
+        });
+        return result;
+    }
+    function playRoute(route, back) {
+        var ctx = sourceContext;
+        if (!ctx || !ctx.embed) return fail('Откройте источник заново.', back);
+        var url = ctx.embed;
+        if (route.kind === 'ua') {
+            url += '?translation=' + encodeURIComponent(route.translation);
+            if (route.season) url += '&season=' + encodeURIComponent(route.season) + '&episode=' + encodeURIComponent(route.episode);
+        }
+        request(url, function (html) {
+            var title = ctx.name, list, index = -1;
+            if (route.kind === 'next') {
+                list = nextRoutes(literal(html, /\bseasons\s*:\s*(?=\[)/) || []);
+                list.forEach(function (e,i) { if (e.route.season === String(route.season) && e.route.episode === String(route.episode)) index = i; });
+                if (index < 0) return fail('Сохранённая серия сейчас недоступна.', back);
+                setRoute(list[index].route, list[index+1] && list[index+1].route);
+                quality(title + ' · S' + route.season + ' E' + route.episode, list[index].data.hls, back, trackMetadata(list[index].data.audio));
+            } else if (route.kind === 'folder') {
+                var raw = literal(html, /\bfile\s*:\s*(?=['"\[])/), folders = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                list = folderRoutes(folders || [], [], '', []);
+                list.forEach(function (e,i) { if (JSON.stringify(e.route.path) === JSON.stringify(route.path)) index = i; });
+                if (index < 0) return fail('Сохранённая серия или озвучка сейчас недоступна.', back);
+                var following = list[index+1];
+                setRoute(route, following && following.group === list[index].group ? following.route : null);
+                quality(title + ' · ' + route.path.join(' · '), list[index].data.file, back);
+            } else if (route.kind === 'ua') {
+                var p = payload(html), routes = uaRoutes(p, route.translation);
+                routes.forEach(function (r,i) { if (r.season === String(route.season) && r.episode === String(route.episode)) index = i; });
+                if (route.season && index < 0) return fail('Сохранённая серия этой озвучки недоступна.', back);
+                setRoute(route, index >= 0 && routes[index+1]);
+                play(title + (route.season ? ' · S' + route.season + ' E' + route.episode : ''), url, p, back);
+            } else if (route.kind === 'movie') {
+                setRoute(route);
+                extraSource({name:title}, {type:ctx.source}, html, back, route.format);
+            } else fail('Запись истории не поддерживается. Откройте источник заново.', back);
+        }, back);
+    }
     function nextSeasons(item, list, back) {
         var available = list.filter(function (s) { return !s.blocked && Array.isArray(s.episodes) && s.episodes.length; });
         available.sort(function (a,b) { return Number(a.season) - Number(b.season); });
@@ -590,26 +743,41 @@
                 if (!episodes.length) return fail('В этом сезоне нет доступных HLS-серий.', function () { nextSeasons(item, list, back); });
                 menu(item.name + ' · сезон ' + season.season, episodes.map(function (e) { return {title:'Серия ' + e.episode, data:e}; }), function (entry) {
                     var e = entry.data;
+                    var routes = nextRoutes(list), index = -1;
+                    routes.forEach(function (r,i) { if (r.route.season === String(season.season) && r.route.episode === String(e.episode)) index = i; });
+                    setRoute({kind:'next', season:String(season.season), episode:String(e.episode)}, index >= 0 && routes[index+1] && routes[index+1].route);
                     quality(item.name + ' · S' + season.season + ' E' + e.episode, e.hls, showEpisodes, trackMetadata(e.audio));
                 }, function () { nextSeasons(item, list, back); });
             }
             showEpisodes();
         }, back);
     }
-    function folderPlaylist(title, list, back, depth) {
+    function folderPlaylist(title, list, back, depth, path) {
+        path = path || [];
         if (depth > 8) return fail('Слишком много вложенных папок плейлиста.', back);
         var entries = list.filter(function (entry) { return entry && (Array.isArray(entry.folder) || (typeof entry.file === 'string' && /^https:\/\/[^\s]+\.m3u8(?:[?#]|$)/.test(entry.file))); });
         if (!entries.length) return fail('В этой папке нет доступных серий.', back);
         function show() {
             menu(title, entries.map(function (entry, index) { return {title:safe(entry.title || ('Серия ' + (index + 1))), data:entry}; }), function (selected) {
                 var entry = selected.data, name = title + ' · ' + String(entry.title || '').trim();
-                if (Array.isArray(entry.folder)) folderPlaylist(name, entry.folder, show, depth + 1);
-                else quality(name, entry.file, show);
+                var selectedPath = path.concat([String(entry.title || '').trim()]);
+                if (Array.isArray(entry.folder)) folderPlaylist(name, entry.folder, show, depth + 1, selectedPath);
+                else {
+                    var routes = folderRoutes(sourceContext && sourceContext.folderRoot || list, [], '', []), index = -1;
+                    routes.forEach(function (r,i) { if (JSON.stringify(r.route.path) === JSON.stringify(selectedPath)) index = i; });
+                    var following = index >= 0 && routes[index+1];
+                    setRoute({kind:'folder', path:selectedPath}, following && following.group === routes[index].group ? following.route : null);
+                    quality(name, entry.file, show);
+                }
             }, back);
+        }
+        if (depth === 0 && options().favorite) {
+            var favorite = entries.filter(function (entry) { return Array.isArray(entry.folder) && sameVoice(entry.title, options().favorite); });
+            if (favorite.length === 1) return folderPlaylist(title + ' · ' + String(favorite[0].title).trim(), favorite[0].folder, show, depth+1, [String(favorite[0].title).trim()]);
         }
         show();
     }
-    function extraSource(item, source, html, back) {
+    function extraSource(item, source, html, back, restoreFormat) {
         // Parse only data literals. Never execute scripts from the source page.
         if (source.type === 'next') {
             var seasonsList = literal(html, /\bseasons\s*:\s*(?=\[)/);
@@ -617,7 +785,10 @@
         } else {
             var file = literal(html, /\bfile\s*:\s*(?=['"\[])/);
             var folders = typeof file === 'string' && /^\s*\[/.test(file) ? JSON.parse(file) : file;
-            if (Array.isArray(folders)) return folderPlaylist(item.name, folders, back, 0);
+            if (Array.isArray(folders)) {
+                if (sourceContext) sourceContext.folderRoot = folders;
+                return folderPlaylist(item.name, folders, back, 0);
+            }
         }
         var match = source.type === 'next' ? html.match(/\bhls\s*:\s*("(?:[^"\\]|\\.)*")/) : html.match(/\bfile\s*:\s*['"](https:\/\/[^'"\s]+\.m3u8[^'"\s]*)['"]/);
         if (!match) return fail('Этот формат плеера пока не поддерживается. Выберите другой источник.', back);
@@ -633,12 +804,19 @@
         if (metadata.translate) entries[0].subtitle += ': ' + metadata.translate.tracks.map(function (t) { return t.name; }).join(', ');
         var dash = source.type === 'next' ? literal(html, /\bdash\s*:\s*(?=")/) : null;
         if (typeof dash === 'string' && /^https:\/\/[^\s]+\.mpd(?:[?#]|$)/.test(dash)) entries.push({title:'Смотреть в DASH · до Full HD', subtitle:'Дополнительные качества источника. Звук зависит от поддержки телевизором.', dash:true});
+        function launchFormat(format) {
+            setRoute({kind:'movie', format:format});
+            if (format === 'dash') {
+                if (!entries.some(function (e) { return e.dash; })) return fail('DASH сейчас недоступен. Выберите обычный просмотр.', showFormats);
+                playDash(item.name, dash, metadata, showFormats);
+            } else quality(item.name, url, back, metadata);
+        }
         function showFormats() {
             menu(item.name + ' · ' + (source.type === 'next' ? 'Плеєр 2' : 'Плеєр 3'), entries, function (entry) {
-                if (entry.dash) playDash(item.name, dash, metadata, showFormats);
-                else quality(item.name, url, back, metadata);
+                launchFormat(entry.dash ? 'dash' : 'hls');
             }, back);
         }
+        if (restoreFormat) return launchFormat(restoreFormat);
         showFormats();
     }
     function playDash(title, url, metadata, back) {
@@ -675,18 +853,22 @@
             }
         }, back);
     }
-    function translations(item, embed, p, back) {
+    function translations(item, embed, p, back, manual) {
         var items = (p.translations || []).map(function (t) { return {title:safe(t.title), id:t.id}; });
         if (!items.length) return fail('Озвучки пока недоступны.', back);
-        menu(item.name + ' · озвучка', items, function (t) {
+        function choose(t) {
+            setRoute({kind:'ua', translation:t.id});
             var u = embed + '?translation=' + encodeURIComponent(t.id);
-            var again = function () { translations(item, embed, p, back); };
+            var again = function () { translations(item, embed, p, back, true); };
             request(u, function (html) {
                 var selected = payload(html);
                 if (selected.is_serial) seasons(item, u, selected, again);
                 else play(item.name, u, selected, again);
             }, again);
-        }, back);
+        }
+        var favorite = options().favorite && items.filter(function (t) { return sameVoice(t.title, options().favorite); });
+        if (!manual && favorite && favorite.length === 1) return choose(favorite[0]);
+        menu(item.name + ' · озвучка', items, choose, back);
     }
     function seasons(item, embed, p, back) {
         var numbers = Object.keys(p.seasons_episodes || {}).sort(function(a,b){return Number(a)-Number(b);});
@@ -695,6 +877,10 @@
             var again = function () { seasons(item, embed, p, back); };
             var episodes = p.seasons_episodes[s.season] || [];
             menu('Сезон ' + s.season, episodes.map(function (e) { return {title:'Серия ' + e, episode:e}; }), function (e) {
+                var translation = sourceContext && sourceContext.route && sourceContext.route.translation || p.translate;
+                var routes = uaRoutes(p, translation), index = -1;
+                routes.forEach(function (r,i) { if (r.season === String(s.season) && r.episode === String(e.episode)) index = i; });
+                setRoute({kind:'ua', translation:translation, season:String(s.season), episode:String(e.episode)}, index >= 0 && routes[index+1]);
                 var u = embed + '&season=' + encodeURIComponent(s.season) + '&episode=' + encodeURIComponent(e.episode);
                 request(u, function (html) { play(item.name + ' · S' + s.season + ' E' + e.episode, u, payload(html), again); }, again);
             }, again);
@@ -755,14 +941,14 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.6.1 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад ' + VERSION + ' · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.6.1', open:home};
+        window.kinokradPersonal = {version:VERSION, open:home};
         if (Lampa.Listener) Lampa.Listener.follow('full', cardButton);
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
@@ -775,6 +961,7 @@
             });
         }
         if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
+            Lampa.PlayerVideo.listener.follow('ended', function () { if (tvSession && tvSession.ended) tvSession.ended(); });
             Lampa.PlayerVideo.listener.follow('timeupdate', function (e) { if (tvSession && tvSession.progress) tvSession.progress(e); });
             Lampa.PlayerVideo.listener.follow('error', function (e) {
                 if (tvSession && tvSession.soundError) tvSession.soundError(e);
@@ -789,5 +976,3 @@
     if (window.appready) start();
     else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') start(); });
 })();
-
-
