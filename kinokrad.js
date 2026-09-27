@@ -69,6 +69,7 @@
             if (changed) { preferred.updated = now; store.preferences[preferenceKey] = preferred; }
             if (latest || changed) { saveMemory(); lastWrite = now; changed = false; }
         };
+        session.describeControls = function () { return {audio:selected(tracks, audioName), quality:selected(levels, levelName)}; };
         session.rememberProgress = function (e) {
             if (!session.started || !isFinite(e.current) || !isFinite(e.duration) || e.duration <= 0) return;
             if (session.resumePending) return;
@@ -87,7 +88,7 @@
             else notice('Сохранённая позиция не подходит этой версии видео. Запускаю с начала.');
         };
         session.recovery = function (reason) {
-            store.errors[context.page] = {source:context.source, mode:metadata && metadata.format || 'hls', reason:cleanError(reason), updated:Date.now()};
+            store.errors[context.page] = {source:context.source, mode:metadata && metadata.format || 'hls', reason:cleanError(reason), details:session.lastSoundDetails || '', updated:Date.now()};
             saveMemory();
             menu('Кінокрад · воспроизведение прервано', [
                 {title:'Выбрать источник', subtitle:'Место просмотра сохранено, если оно было определено.', action:'source'},
@@ -101,12 +102,104 @@
     }
     function showDiagnostics(page, back) {
         var error = memory().errors[page];
-        fail(error ? 'Источник: ' + error.source + ' · ' + error.mode.toUpperCase() + '. ' + error.reason : 'Сохранённых ошибок нет.', back);
+        fail(error ? 'Источник: ' + error.source + ' · ' + error.mode.toUpperCase() + '. ' + error.reason + (error.details ? ' · ' + error.details : '') : 'Сохранённых ошибок нет.', back);
+    }
+    function soundTools(session, context, title, url, manifest, metadata, back, fallback) {
+        if (!context) return;
+        var button, media, events = [], bindings = [], mode = metadata && metadata.format || 'hls';
+        function active() { return tvSession === session && session.active; }
+        function currentMedia() { try { return Lampa.PlayerVideo.video(); } catch (e) { return null; } }
+        function position() {
+            var element = currentMedia(), value = element ? Number(element.currentTime) : NaN;
+            return isFinite(value) && value >= 0 ? value : Math.max(0, session.lastTime || 0);
+        }
+        function record(type, detail) {
+            if (!active()) return;
+            events.push(timeLabel(position()) + ' ' + type + (detail ? ': ' + cleanError(detail) : ''));
+            events = events.slice(-10);
+        }
+        function snapshot(report) {
+            var element = currentMedia(), controls = session.describeControls ? session.describeControls() : {};
+            var lines = ['Позиция ' + timeLabel(position()), 'Озвучка: ' + (controls.audio || 'не определена'), 'Качество: ' + (controls.quality || 'авто/не определено')];
+            if (element) {
+                lines.push('Звук выключен: ' + (element.muted ? 'да' : 'нет'));
+                if (isFinite(element.volume)) lines.push('Громкость плеера: ' + Math.round(element.volume*100) + '%');
+                lines.push('Пауза: ' + (element.paused ? 'да' : 'нет'));
+                if (typeof element.readyState === 'number') lines.push('Готовность: ' + element.readyState);
+                if (typeof element.networkState === 'number') lines.push('Сеть: ' + element.networkState);
+                if (element.error) lines.push('Ошибка видео: ' + cleanError(element.error.code + ' ' + (element.error.message || '')));
+                try {
+                    var buffered = 0;
+                    for (var i=0; i<element.buffered.length; i++) if (element.buffered.start(i) <= position() && element.buffered.end(i) >= position()) buffered = Math.round(element.buffered.end(i)-position());
+                    lines.push('Буфер видео впереди: ' + buffered + ' с');
+                } catch (e) {}
+                if (typeof element.webkitAudioDecodedByteCount === 'number') lines.push('Обработано аудиобайт: ' + element.webkitAudioDecodedByteCount);
+            }
+            if (events.length) lines.push('События: ' + events.join(' / '));
+            var details = lines.join(' · ');
+            session.lastSoundDetails = details;
+            memory().errors[context.page] = {source:context.source, mode:mode, reason:report ? 'Пользователь сообщил о пропаже звука' : 'Снимок состояния плеера', details:details, updated:Date.now()};
+            saveMemory();
+            return lines;
+        }
+        function returnPlayer() { if (active()) Lampa.Controller.toggle('player_panel'); }
+        session.restartSound = function () {
+            if (!active() || session.restarting) return;
+            session.restarting = true;
+            var at = position(), element = currentMedia();
+            if (session.rememberProgress && element) session.rememberProgress({current:at, duration:element.duration});
+            if (session.save) session.save(true);
+            snapshot(true);
+            Lampa.Player.close();
+            if (active()) endTV();
+            sourceContext = context;
+            launchTV(title, url, manifest, metadata, back, fallback, undefined, at);
+        };
+        session.soundMenu = function () {
+            if (!active()) return;
+            menu('Кінокрад · звук', [
+                {title:'Перезапустить с ' + timeLabel(position()), action:'restart'},
+                {title:'Диагностика звука', action:'diagnostics'}, {title:'Назад', action:'back'}
+            ], function (choice) {
+                if (!active()) return;
+                if (choice.action === 'restart') session.restartSound();
+                else if (choice.action === 'diagnostics') {
+                    var lines = snapshot(false).map(function (line) { return {title:safe(line)}; });
+                    lines.push({title:'Назад'});
+                    menu('Звук · ' + context.source + ' · ' + mode.toUpperCase(), lines, session.soundMenu, session.soundMenu);
+                } else returnPlayer();
+            }, returnPlayer);
+        };
+        session.soundError = function (e) {
+            record(e.fatal ? 'фатальная ошибка' : 'ошибка', e.error);
+            if (e.fatal && active()) snapshot(false);
+        };
+        session.installSound = function () {
+            if (!active()) return;
+            media = currentMedia();
+            if (media && typeof media.addEventListener === 'function' && !bindings.length) {
+                ['waiting','stalled','playing','volumechange','error'].forEach(function (name) {
+                    var handler = function () { record(name, name === 'error' && media.error ? media.error.message : ''); };
+                    media.addEventListener(name,handler); bindings.push({name:name, handler:handler});
+                });
+            }
+            if (button || !Lampa.PlayerPanel || !Lampa.PlayerPanel.render) return;
+            var panel = Lampa.PlayerPanel.render(), target = panel.find('.player-panel__right').eq(0);
+            if (!target.length) return;
+            button = $('<div class="player-panel__button button selector kinokrad-sound" style="padding:0 0.6em;white-space:nowrap" title="Диагностика и перезапуск звука">Звук</div>');
+            button.on('hover:enter', session.soundMenu); target.append(button);
+        };
+        session.cleanupSound = function () {
+            if (button) button.remove();
+            if (media && typeof media.removeEventListener === 'function') bindings.forEach(function (binding) { media.removeEventListener(binding.name,binding.handler); });
+            bindings = [];
+        };
     }
     function notice(message) { if (Lampa.Noty) Lampa.Noty.show(message); }
     function endTV() {
         if (!tvSession) return;
         if (tvSession.save) tvSession.save(true);
+        if (tvSession.cleanupSound) tvSession.cleanupSound();
         tvSession.active = false;
         clearTimeout(tvSession.timer);
         clearTimeout(tvSession.failureTimer);
@@ -231,6 +324,7 @@
         session.fallback = !!fallback;
         session.started = false;
         playbackMemory(session, context, title, metadata, resumeAt || 0);
+        soundTools(session, context, title, url, manifest, metadata, back, fallback);
         function active() { return tvSession === session && session.active; }
         function failure(reason) {
             if (!active() || session.failed) return;
@@ -661,23 +755,31 @@
     function home() {
         serial++;
         if (!isAndroid() && !isTizen()) return fail('Откройте плагин в приложении Lampa для Android или Samsung Tizen.', function () { Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
-        menu('Кінокрад 0.6.0 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
+        menu('Кінокрад 0.6.1 · ' + (isAndroid() ? 'Android' : 'Tizen'), [{title:'Поиск', action:'search'}, {title:'Все новинки', path:'/'}, {title:'Фильмы', path:'/films/'}, {title:'Сериалы', path:'/serials/'}], function (item) {
             if (item.action === 'search') Lampa.Input.edit({title:'Название на украинском', value:'', free:true, nosave:true}, function (q) { if (q && q.trim()) catalog('/', 1, q.trim()); else home(); });
             else catalog(item.path, 1);
         }, function () { serial++; Lampa.Select.hide(); Lampa.Controller.toggle('menu'); });
     }
     function start() {
         if (window.kinokradPersonal) return;
-        window.kinokradPersonal = {version:'0.6.0', open:home};
+        window.kinokradPersonal = {version:'0.6.1', open:home};
         if (Lampa.Listener) Lampa.Listener.follow('full', cardButton);
         if (Lampa.Player.listener) {
             Lampa.Player.listener.follow('destroy', endTV);
             Lampa.Player.listener.follow('create', function (e) { if (tvSession && (!e.data || e.data.kinokradTV !== tvSession)) endTV(); });
-            Lampa.Player.listener.follow('ready', function (e) { if (tvSession && e && e.kinokradTV === tvSession && tvSession.arm) tvSession.arm(); });
+            Lampa.Player.listener.follow('ready', function (e) {
+                if (tvSession && e && e.kinokradTV === tvSession) {
+                    if (tvSession.arm) tvSession.arm();
+                    if (tvSession.installSound) tvSession.installSound();
+                }
+            });
         }
         if (Lampa.PlayerVideo && Lampa.PlayerVideo.listener) {
             Lampa.PlayerVideo.listener.follow('timeupdate', function (e) { if (tvSession && tvSession.progress) tvSession.progress(e); });
-            Lampa.PlayerVideo.listener.follow('error', function (e) { if (tvSession && tvSession.error) tvSession.error(e); });
+            Lampa.PlayerVideo.listener.follow('error', function (e) {
+                if (tvSession && tvSession.soundError) tvSession.soundError(e);
+                if (tvSession && tvSession.error) tvSession.error(e);
+            });
             Lampa.PlayerVideo.listener.follow('tracks', function (e) { if (tvSession && tvSession.tracks) tvSession.tracks(e); });
             Lampa.PlayerVideo.listener.follow('levels', function (e) { if (tvSession && tvSession.levels) tvSession.levels(e); });
             Lampa.PlayerVideo.listener.follow('loadeddata', function (e) { if (tvSession && tvSession.loaded) tvSession.loaded(e); });
