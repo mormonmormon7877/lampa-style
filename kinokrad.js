@@ -7,7 +7,7 @@
     var tvSession = null;
     var sourceContext = null;
     var memoryCache = null;
-    var VERSION = '0.7.0';
+    var VERSION = '0.7.1';
     function options() {
         var data = memory();
         if (!data.options || typeof data.options !== 'object') data.options = {autoplay:false, favorite:''};
@@ -109,7 +109,7 @@
             if (changed) { preferred.updated = now; store.preferences[preferenceKey] = preferred; }
             if (latest || changed) { saveMemory(); lastWrite = now; changed = false; }
         };
-        session.describeControls = function () { return {audio:selected(tracks, audioName), quality:selected(levels, levelName)}; };
+        session.describeControls = function () { return {audio:selected(tracks, audioName), quality:selected(levels, levelName), availableAudio:(tracks || []).map(function (track,i) { return audioName(track,i) || ('дорожка ' + (i+1)); })}; };
         session.completeEpisode = function () { if (latest) { latest.position = 0; session.save(true); } };
         session.rememberProgress = function (e) {
             if (!session.started || !isFinite(e.current) || !isFinite(e.duration) || e.duration <= 0) return;
@@ -161,7 +161,7 @@
         }
         function snapshot(report) {
             var element = currentMedia(), controls = session.describeControls ? session.describeControls() : {};
-            var lines = ['Позиция ' + timeLabel(position()), 'Озвучка: ' + (controls.audio || 'не определена'), 'Качество: ' + (controls.quality || 'авто/не определено')];
+            var lines = ['Позиция ' + timeLabel(position()), 'Озвучка: ' + (controls.audio || 'не определена'), 'Доступные дорожки: ' + (controls.availableAudio && controls.availableAudio.length ? controls.availableAudio.join(', ') : 'не сообщены'), 'Качество: ' + (controls.quality || 'авто/не определено')];
             if (element) {
                 lines.push('Звук выключен: ' + (element.muted ? 'да' : 'нет'));
                 if (isFinite(element.volume)) lines.push('Громкость плеера: ' + Math.round(element.volume*100) + '%');
@@ -224,11 +224,16 @@
             menu('Кінокрад · звук', [
                 {title:'Перезапустить с ' + timeLabel(position()), action:'restart'},
                 {title:'Диагностика звука', action:'diagnostics'},
+                {title:'Звук пропал · сохранить снимок', action:'report'},
                 {title:'Сделать текущую озвучку избранной', action:'favorite'}, {title:'Назад', action:'back'}
             ], function (choice) {
                 if (!active()) return;
                 if (choice.action === 'restart') session.restartSound();
-                else if (choice.action === 'diagnostics') {
+                else if (choice.action === 'report') {
+                    snapshot(true);
+                    notice('Снимок сохранён. После просмотра откройте «Источник» → «Последняя ошибка» и пришлите мне текст.');
+                    returnPlayer();
+                } else if (choice.action === 'diagnostics') {
                     var lines = snapshot(false).map(function (line) { return {title:safe(line)}; });
                     lines.push({title:'Назад'});
                     menu('Звук · ' + context.source + ' · ' + mode.toUpperCase(), lines, session.soundMenu, session.soundMenu);
