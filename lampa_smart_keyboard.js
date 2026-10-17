@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 3.0: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 3.1: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.0')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.1')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -49,7 +49,7 @@ function installPatch(){
    result=original.apply(this,arguments);
    var after=this.getInput()||'',added=split(after).slice(split(before).length).join('');
    if(added){
-    a.splice(cursor,0,...split(added));cursor+=split(added).length;
+    var addedChars=split(added);Array.prototype.splice.apply(a,[cursor,0].concat(addedChars));cursor+=addedChars.length;
     var corrected=a.join('');
     if(corrected!==after){
      this.setInput(corrected);
@@ -78,7 +78,7 @@ function installControls(){
  if(!installPatch())return;
  var kb=document.querySelector('.simple-keyboard'),last=kb&&kb.querySelector('.hg-row:last-child');
  if(!last)return;
- if(!tracking){tracking=true;cursor=split(document.querySelector('.search__input')?.textContent||'').length}
+ if(!tracking){tracking=true;cursor=split((document.querySelector('.search__input') ? document.querySelector('.search__input').textContent : '')||'').length}
  if(!kb.querySelector('.lsk-left')){
   [['◀ Курсор',-1,'lsk-left'],['Курсор ▶',1,'lsk-right']].forEach(function(item){
    var b=document.createElement('div');
@@ -114,6 +114,6 @@ function init(){
  schedule();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
-window.LampaSmartKeyboard={version:'3.0',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 3.0');
+window.LampaSmartKeyboard={version:'3.1',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 3.1');
 })();
