@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 2.0 — native search keyboard integration */
+/* Lampa Smart Keyboard 2.1 — native search keyboard integration */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard && window.LampaSmartKeyboard.version==='2.0')return;
+if(window.LampaSmartKeyboard && window.LampaSmartKeyboard.version==='2.1')return;
 var active=false,overlay=null,value='',pos=0,row=0,col=0,lang=0,rows=[],lastParams=null;
 var layouts=[['RU',['йцукенгшщзхъ','фывапролджэ','ячсмитьбю']],['UA',['йцукенгшщзхї','фівапролджє','ячсмитьбюґ']],['EN',['qwertyuiop','asdfghjkl','zxcvbnm']]];
 var preview,keys,notice;
@@ -91,9 +91,11 @@ function installButton(){
  btn.textContent='✎ Курсор';
  btn.setAttribute('data-skbtn','{LSK_EDIT}');
  btn.style.cssText='min-width:105px;background:#dcae27;color:#111;font-weight:bold';
- btn.addEventListener('hover:enter',function(e){if(e.stopImmediatePropagation)e.stopImmediatePropagation();open()});
+ if(window.jQuery)window.jQuery(btn).on('hover:enter',function(){open()});
  btn.addEventListener('click',function(e){e.stopPropagation();open()});
  rowEl.appendChild(btn);
+ // Lampa navigation keeps a separate list of focusable selectors.
+ try{if(window.Lampa&&Lampa.Controller&&Lampa.Controller.collectionAppend)Lampa.Controller.collectionAppend(btn)}catch(e){console.warn('[Smart Keyboard] navigation registration',e)}
 }
 function init(){
  if(!window.Lampa||!Lampa.Search||!Lampa.Search.listener)return false;
@@ -105,6 +107,6 @@ function init(){
  return true;
 }
 var attempts=0,timer=setInterval(function(){if(init()||++attempts>120)clearInterval(timer)},500);
-window.LampaSmartKeyboard={version:'2.0',open:open,close:function(){finish(false)}};
-console.log('[Lampa Smart Keyboard] 2.0 loaded');
+window.LampaSmartKeyboard={version:'2.1',open:open,close:function(){finish(false)}};
+console.log('[Lampa Smart Keyboard] 2.1 loaded');
 })();
