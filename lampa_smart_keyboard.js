@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 3.5: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 3.6: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.5')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.6')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -25,62 +25,43 @@ function display(value){
  if(!a.length)marker.appendChild(document.createTextNode('  ← курсор →'));
 }
 function nativeClass(){return window.SimpleKeyboard&&window.SimpleKeyboard.default}
+function patchInstance(kb){
+ if(!kb||kb.__lskPatched||typeof kb.handleButtonClicked!=='function')return;
+ var original=kb.handleButtonClicked;
+ kb.handleButtonClicked=function(button,event){
+  if(!searchOpen()||!tracking)return original.apply(this,arguments);
+  var a=split(this.getInput()||'');
+  cursor=limit(cursor,a.length);
+  if(button==='{BKSP}'||button==='{SPACE}'||(typeof button==='string'&&button.charAt(0)!=='{')){
+   if(button==='{BKSP}'&&cursor>0){a.splice(cursor-1,1);cursor--}
+   else if(button==='{SPACE}'){a.splice(cursor,0,' ');cursor++}
+   else if(button.charAt(0)!=='{'){
+    var letters=split(button);
+    Array.prototype.splice.apply(a,[cursor,0].concat(letters));
+    cursor+=letters.length;
+   }
+   var value=a.join('');
+   this.setInput(value);
+   if(this.options&&typeof this.options.onChange==='function')this.options.onChange(value);
+   display(value);
+   return;
+  }
+  return original.apply(this,arguments);
+ };
+ kb.__lskPatched=true;
+}
 function installPatch(){
  if(patched)return true;
  var cls=nativeClass();
- if(!cls||!cls.prototype||typeof cls.prototype.handleButtonClicked!=='function')return false;
- var original=cls.prototype.handleButtonClicked;
- cls.prototype.handleButtonClicked=function(button,event){
-  if(!searchOpen()||!tracking)return original.apply(this,arguments);
-  var before=this.getInput()||'',a=split(before);
-  cursor=limit(cursor,a.length);
-  var result;
-  if(button==='{BKSP}'||button==='{SPACE}'){
-   if(button==='{BKSP}'&&cursor>0){a.splice(cursor-1,1);cursor--}
-   if(button==='{SPACE}'){a.splice(cursor,0,' ');cursor++}
-   var next=a.join('');
-   // Do not run Lampa's own BKSP/SPACE callback: it always edits the end.
-   var previousCallback=this.options&&this.options.onKeyPress;
-   if(this.options)this.options.onKeyPress=function(){};
-   try{
-    this.setInput(next);
-    if(this.options&&typeof this.options.onChange==='function')this.options.onChange(next);
-   }finally{
-    if(this.options)this.options.onKeyPress=previousCallback;
-   }
-   display(next);
-   return;
-  }
-  if(typeof button==='string'&&button.charAt(0)!=='{'&&button.length){
-   // Insert directly at the caret. Native append must not run.
-   var chars=split(button);
-   Array.prototype.splice.apply(a,[cursor,0].concat(chars));
-   cursor+=chars.length;
-   var corrected=a.join('');
-   this.setInput(corrected);
-   if(this.options&&typeof this.options.onChange==='function')this.options.onChange(corrected);
-   display(corrected);
-   return;
-  }
-  result=original.apply(this,arguments);
-   var after=this.getInput()||'',added=split(after).slice(split(before).length).join('');
-   if(added){
-    var addedChars=split(added);Array.prototype.splice.apply(a,[cursor,0].concat(addedChars));cursor+=addedChars.length;
-    var corrected=a.join('');
-    if(corrected!==after){
-     this.setInput(corrected);
-     if(this.options&&typeof this.options.onChange==='function')this.options.onChange(corrected);
-    }
-    display(corrected);
-   }else display(after);
-   return result;
-  }
-  result=original.apply(this,arguments);
-  display(this.getInput()||'');
-  return result;
- };
- patched=true;
- return true;
+ if(typeof cls!=='function')return false;
+ function WrappedKeyboard(){
+  var instance=Reflect.construct(cls,arguments,cls);
+  patchInstance(instance);
+  return instance;
+ }
+ WrappedKeyboard.prototype=cls.prototype;
+ try{window.SimpleKeyboard.default=WrappedKeyboard;patched=true;return true}
+ catch(e){console.error('[LSK] constructor patch',e);return false}
 }
 function move(delta){
  if(!searchOpen())return;
@@ -120,6 +101,7 @@ function schedule(){
 }
 function init(){
  if(!document.body)return;
+ installPatch();
  var observer=new MutationObserver(schedule);
  observer.observe(document.body,{childList:true,subtree:true});
  if(window.Lampa&&Lampa.Search&&Lampa.Search.listener){
@@ -152,6 +134,6 @@ function installRestart(){
 }
 var restartTimer=setInterval(installRestart,2000);
 installRestart();
-window.LampaSmartKeyboard={version:'3.5',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 3.5');
+window.LampaSmartKeyboard={version:'3.6',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 3.6');
 })();
