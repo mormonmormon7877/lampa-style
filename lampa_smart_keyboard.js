@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 3.1: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 3.2: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.1')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.2')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -114,6 +114,24 @@ function init(){
  schedule();
 }
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
-window.LampaSmartKeyboard={version:'3.1',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 3.1');
+// Header action: restart Lampa from the native TV remote navigation.
+function installRestart(){
+ if(!window.Lampa||!Lampa.Head||typeof Lampa.Head.addIcon!=='function')return false;
+ if(document.querySelector('.lsk-restart-action'))return true;
+ var icon='<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11a9 9 0 1 1 2.7 6.4"/><path d="M3 4v7h7"/></svg>';
+ try{
+  var button=Lampa.Head.addIcon(icon,function(){window.location.reload()});
+  if(button&&button.addClass){
+   button.addClass('lsk-restart-action');
+   button.attr('title','Перезапустить Lampa');
+   button.attr('aria-label','Перезапустить Lampa');
+  }
+  return true;
+ }catch(e){console.error('[Lampa Smart Keyboard] restart button',e);return false}
+}
+var restartTries=0,restartTimer=setInterval(function(){
+ if(installRestart()||++restartTries>120)clearInterval(restartTimer);
+},500);
+window.LampaSmartKeyboard={version:'3.2',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 3.2');
 })();
