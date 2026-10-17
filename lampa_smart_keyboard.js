@@ -59,41 +59,41 @@ function close(save){if(!state.open)return;state.open=false;window.removeEventLi
 function open(target){if(state.open)return;state.target=target||null;state.value=target?target.value||'':'';state.original=state.value;state.pos=chars(state.value).length;state.row=0;state.col=0;state.mode=false;state.open=true;
  var overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.92);display:flex;align-items:center;justify-content:center;color:#fff;font-family:Arial,sans-serif';
  root=document.createElement('div');root.style.cssText='width:94%;max-width:960px;background:#20242c;border-radius:14px;padding:22px;box-sizing:border-box';
- var heading=document.createElement('div');heading.textContent='Lampa Smart Keyboard 1.0';heading.style.cssText='font-size:24px;margin-bottom:14px';
+ var heading=document.createElement('div');heading.textContent='Lampa Smart Keyboard 1.2';heading.style.cssText='font-size:24px;margin-bottom:14px';
  preview=document.createElement('div');preview.style.cssText='background:#101318;border:1px solid #596170;border-radius:8px;padding:14px;min-height:30px;font-size:26px;white-space:pre-wrap;overflow-wrap:anywhere';
  info=document.createElement('div');info.style.cssText='font-size:15px;color:#bbb;margin:12px 0';grid=document.createElement('div');
  root.appendChild(heading);root.appendChild(preview);root.appendChild(info);root.appendChild(grid);overlay.appendChild(root);document.body.appendChild(overlay);state.overlay=overlay;
  window.addEventListener('keydown',keydown,true);draw();}
-// v1.1: visible remote-accessible launch button; no double-click requirement.
-var launcher=document.createElement('button');
-launcher.type='button';
-launcher.textContent='✎ Редактор';
-launcher.setAttribute('aria-label','Открыть редактор поискового текста');
-launcher.style.cssText='position:fixed;right:16px;bottom:18px;z-index:2147483640;background:#f5c542;color:#111;padding:13px 19px;border:3px solid #fff;border-radius:10px;font:bold 19px Arial;display:none';
-document.body.appendChild(launcher);
-var currentInput=null;
-function isEditable(t){return t&&t.tagName==='INPUT'&&t.type!=='hidden'&&t.type!=='password'||t&&t.tagName==='TEXTAREA'}
-function scan(){
- var inputs=document.querySelectorAll('input[type="search"],input[type="text"],textarea,.search__input');
- var candidate=null;
- for(var i=0;i<inputs.length;i++){
-  var t=inputs[i],r=t.getBoundingClientRect();
-  if(r.width>0&&r.height>0&&r.bottom>0&&r.top<innerHeight){candidate=t;break}
- }
- currentInput=candidate;
- launcher.style.display=candidate&&!state.open?'block':'none';
+// v1.2: open from the search field itself, no unreachable floating button.
+var suppressUntil=0;
+var lastOpened=null;
+function isSearchInput(t){
+ if(!t || !t.matches) return false;
+ if(!t.matches('input[type="search"],input[type="text"],input.search__input,textarea'))return false;
+ if(t.closest('#lsk-overlay'))return false;
+ var r=t.getBoundingClientRect();
+ return r.width>0&&r.height>0;
 }
-launcher.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();if(currentInput)open(currentInput)});
-document.addEventListener('focusin',function(e){if(isEditable(e.target)){currentInput=e.target;launcher.style.display='block'}},true);
-document.addEventListener('click',function(e){
- var t=e.target;if(!t||!t.closest||state.open)return;
- var input=t.closest('input[type="search"],input[type="text"],textarea');
- if(input){currentInput=input;launcher.style.display='block'}
+function activate(t){
+ if(state.open || Date.now()<suppressUntil || !isSearchInput(t))return;
+ lastOpened=t;
+ open(t);
+}
+document.addEventListener('focusin',function(e){
+ if(isSearchInput(e.target))activate(e.target);
 },true);
-var observer=new MutationObserver(function(){scan()});
-observer.observe(document.body,{childList:true,subtree:true});
-setInterval(scan,1600);
-scan();
-window.LampaSmartKeyboard={open:open,close:close,version:'1.1',scan:scan};
-console.log('[Lampa Smart Keyboard] 1.1 loaded');
+document.addEventListener('click',function(e){
+ var t=e.target;
+ if(t&&t.closest){
+  var input=t.closest('input[type="search"],input[type="text"],input.search__input,textarea');
+  if(input)activate(input);
+ }
+},true);
+var originalClose=close;
+close=function(save){
+ suppressUntil=Date.now()+1200;
+ originalClose(save);
+};
+window.LampaSmartKeyboard={open:open,close:function(){close(false)},version:'1.2'};
+console.log('[Lampa Smart Keyboard] 1.2 loaded: opens on search field focus');
 })();
