@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lampa — голосовой поиск</title><style>
+body{background:#101522;color:#fff;font:18px system-ui,Arial;margin:0;padding:22px}main{max-width:540px;margin:30px auto}h1{font-size:27px}input,button{box-sizing:border-box;width:100%;border-radius:12px;padding:17px;font-size:20px;margin:9px 0}input{background:#242d40;border:1px solid #62718d;color:white}button{border:0;background:#f2c447;color:#151515;font-weight:bold}button:disabled{opacity:.45}.sub{color:#aab6c9;font-size:15px}#status{padding:15px;background:#202a3a;border-radius:10px;margin-top:14px;min-height:25px}.hide{display:none}</style></head>
+<body><main><h1>🎤 Голосовой поиск Lampa</h1><p class="sub">Один раз введи код с телевизора. Затем открывай эту страницу на Xiaomi и произноси название фильма.</p>
+<section id="pair"><label for="code">Код подключения с телевизора</label><input id="code" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="24 символа"><button id="save">Подключить телевизор</button></section>
+<section id="ready" class="hide"><p>Телевизор подключён <span id="short"></span></p><button id="talk">🎤 Произнести название фильма</button><input id="phrase" placeholder="Или введи название вручную"><button id="send">Отправить в Lampa</button><button id="change" style="background:#303a4f;color:white">Сменить телевизор</button></section>
+<div id="status" role="status">Ожидание подключения</div><p class="sub">Открой поиск в Lampa перед отправкой. Для распознавания голоса используй Chrome на Xiaomi и разреши микрофон. Текст передаётся через публичный сервис ntfy.sh; не отправляй личную информацию.</p></main>
+<script>
+(function(){
+'use strict';
+var code='',field=document.getElementById('code'),status=document.getElementById('status');
+function state(v){status.textContent=v}
+function show(){document.getElementById('pair').className=code?'hide':'';document.getElementById('ready').className=code?'':'hide';document.getElementById('short').textContent=code?'('+code.slice(0,5)+'…)':'';state(code?'Готово. Открой поиск на телевизоре.':'Введи код подключения')}
+function save(){var v=field.value.toLowerCase().replace(/\s/g,'');if(!/^[a-f0-9]{24}$/.test(v)){state('Нужен код из 24 символов с телевизора');return}code=v;try{localStorage.setItem('lsk_phone_code',code)}catch(e){}show()}
+document.getElementById('save').onclick=save;
+document.getElementById('change').onclick=function(){code='';try{localStorage.removeItem('lsk_phone_code')}catch(e){}show()};
+function send(text){
+ text=String(text||'').trim();
+ if(!text){state('Сначала произнеси или введи название фильма');return}
+ state('Отправляю: '+text);
+ fetch('https://ntfy.sh/lampa-voice-'+code,{method:'POST',body:text,headers:{'Content-Type':'text/plain;charset=UTF-8'}}).then(function(r){if(!r.ok)throw Error(r.status);state('✓ Отправлено в Lampa: '+text)}).catch(function(e){state('Не удалось отправить: '+e.message)});
+}
+document.getElementById('send').onclick=function(){send(document.getElementById('phrase').value)};
+document.getElementById('talk').onclick=function(){
+ var R=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!R){state('В этом браузере нет распознавания речи. Открой страницу в Chrome.');return}
+ try{
+  var rec=new R();rec.lang='ru-RU';rec.interimResults=false;
+  rec.onresult=function(e){var t=e.results[0][0].transcript;document.getElementById('phrase').value=t;send(t)};
+  rec.onerror=function(e){state('Ошибка микрофона: '+e.error)};
+  rec.onstart=function(){state('🎤 Говори название фильма…')};
+  rec.start();
+ }catch(e){state('Не удалось запустить микрофон: '+e.message)}
+};
+try{code=localStorage.getItem('lsk_phone_code')||''}catch(e){}
+if(!/^[a-f0-9]{24}$/.test(code))code='';
+show();
+})();
+</script></body></html>
