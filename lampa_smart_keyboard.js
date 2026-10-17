@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 4.1: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 4.2: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='4.1')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='4.2')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -60,6 +60,35 @@ function patchInstance(kb){
  };
  kb.__lskPatched=true;
 }
+function voiceSearch(kb){
+ var Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!Recognition){
+  if(window.Lampa&&Lampa.Noty&&Lampa.Noty.show)Lampa.Noty.show('Голосовой ввод недоступен в браузере телевизора');
+  else alert('Голосовой ввод недоступен в браузере телевизора');
+  return;
+ }
+ try{
+  var rec=new Recognition();
+  rec.lang=(window.Lampa&&Lampa.Storage&&Lampa.Storage.get&&Lampa.Storage.get('language','ru')==='uk')?'uk-UA':'ru-RU';
+  rec.interimResults=false;
+  rec.maxAlternatives=1;
+  rec.onresult=function(event){
+   var phrase=event.results&&event.results[0]&&event.results[0][0]&&event.results[0][0].transcript;
+   if(!phrase)return;
+   kb.setInput(phrase);
+   cursor=split(phrase).length;
+   if(kb.options&&typeof kb.options.onChange==='function')kb.options.onChange(phrase);
+   display(phrase);
+  };
+  rec.onerror=function(event){
+   var msg=event&&event.error==='not-allowed'?'Нет доступа к микрофону':'Голосовой ввод: '+(event.error||'ошибка');
+   if(window.Lampa&&Lampa.Noty&&Lampa.Noty.show)Lampa.Noty.show(msg);
+  };
+  rec.start();
+ }catch(e){
+  if(window.Lampa&&Lampa.Noty&&Lampa.Noty.show)Lampa.Noty.show('Не удалось включить микрофон');
+ }
+}
 function customSearchKeyboard(opts){
  var self=this;
  this.options=opts;
@@ -108,6 +137,7 @@ function customSearchKeyboard(opts){
   render();
  };
  this.handleButtonClicked=function(key){
+  if(key==='{MIC}'){voiceSearch(self);return}
   if(key==='{BKSP}'||key==='{SPACE}'||(key.charAt(0)!=='{')){
    var arr=split(self.input);
    cursor=limit(cursor,arr.length);
@@ -213,6 +243,6 @@ function installRestart(){
 }
 var restartTimer=setInterval(installRestart,2000);
 installRestart();
-window.LampaSmartKeyboard={version:'4.1',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 4.1');
+window.LampaSmartKeyboard={version:'4.2',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 4.2');
 })();
