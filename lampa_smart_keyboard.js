@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 3.6: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 4.0: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.6')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='4.0')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -50,18 +50,86 @@ function patchInstance(kb){
  };
  kb.__lskPatched=true;
 }
+function customSearchKeyboard(opts){
+ var self=this;
+ this.options=opts;
+ this.options.layoutName='default';
+ this.options.lastLayerSelect='default';
+ this.input='';
+ this.__lskCustom=true;
+ function render(){
+  var host=document.querySelector('.simple-keyboard');
+  if(!host)return;
+  host.innerHTML='';
+  var rows=self.options.layout[self.options.layoutName]||self.options.layout.default||[];
+  rows.forEach(function(row){
+   var line=document.createElement('div');
+   line.className='hg-row';
+   row.split(/\s+/).forEach(function(key){
+    if(!key)return;
+    var el=document.createElement('div');
+    el.className='hg-button';
+    el.setAttribute('data-skbtn',key);
+    var labels={'{BKSP}':'⌫','{SPACE}':'Пробел','{LANG}':'🌐','{SIM}':'#+','{ABC}':'АБВ','{MIC}':'🎤','{ENTER}':'OK','{SEARCH}':'Поиск','{SHIFT}':'⇧'};
+    el.textContent=labels[key]||key;
+    line.appendChild(el);
+   });
+   host.appendChild(line);
+  });
+  // Cursor keys are native remote-navigable elements.
+  var last=host.querySelector('.hg-row:last-child');
+  if(last){
+   [['◀ Курсор',-1,'lsk-left'],['Курсор ▶',1,'lsk-right']].forEach(function(item){
+    var el=document.createElement('div');
+    el.className='hg-button selector binded '+item[2];
+    el.textContent=item[0];
+    el.style.cssText='min-width:108px;background:#dcb332;color:#151515;font-weight:bold';
+    el.setAttribute('data-skbtn',item[2]);
+    if(window.jQuery)window.jQuery(el).on('hover:enter',function(){move(item[1])});
+    el.addEventListener('click',function(){move(item[1])});
+    last.appendChild(el);
+   });
+  }
+ }
+ this.getInput=function(){return self.input};
+ this.setInput=function(v){self.input=String(v||'')};
+ this.setOptions=function(o){
+  for(var k in o)if(Object.prototype.hasOwnProperty.call(o,k))self.options[k]=o[k];
+  render();
+ };
+ this.handleButtonClicked=function(key){
+  if(key==='{BKSP}'||key==='{SPACE}'||(key.charAt(0)!=='{')){
+   var arr=split(self.input);
+   cursor=limit(cursor,arr.length);
+   if(key==='{BKSP}'&&cursor>0){arr.splice(cursor-1,1);cursor--}
+   else if(key==='{SPACE}'){arr.splice(cursor,0,' ');cursor++}
+   else if(key.charAt(0)!=='{'){
+    var letters=split(key);
+    Array.prototype.splice.apply(arr,[cursor,0].concat(letters));
+    cursor+=letters.length;
+   }
+   self.input=arr.join('');
+   if(typeof self.options.onChange==='function')self.options.onChange(self.input);
+   display(self.input);
+  }else if(typeof self.options.onKeyPress==='function')self.options.onKeyPress(key);
+ };
+ render();
+}
 function installPatch(){
  if(patched)return true;
  var cls=nativeClass();
  if(typeof cls!=='function')return false;
- function WrappedKeyboard(){
+ function WrappedKeyboard(opts){
+  var layout=opts&&opts.layout;
+  var isSearch=layout&&layout.sim&&layout.en&&layout.default&&layout.sim.length===2&&layout.en.length===3;
+  if(isSearch)return new customSearchKeyboard(opts);
   var instance=Reflect.construct(cls,arguments,cls);
   patchInstance(instance);
   return instance;
  }
  WrappedKeyboard.prototype=cls.prototype;
  try{window.SimpleKeyboard.default=WrappedKeyboard;patched=true;return true}
- catch(e){console.error('[LSK] constructor patch',e);return false}
+ catch(e){console.error('[LSK] custom keyboard',e);return false}
 }
 function move(delta){
  if(!searchOpen())return;
@@ -134,6 +202,6 @@ function installRestart(){
 }
 var restartTimer=setInterval(installRestart,2000);
 installRestart();
-window.LampaSmartKeyboard={version:'3.6',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 3.6');
+window.LampaSmartKeyboard={version:'4.0',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 4.0');
 })();
