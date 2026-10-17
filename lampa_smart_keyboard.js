@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 4.2: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 4.3: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='4.2')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='4.3')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -60,35 +60,79 @@ function patchInstance(kb){
  };
  kb.__lskPatched=true;
 }
-function voiceSearch(kb){
- var Recognition=window.SpeechRecognition||window.webkitSpeechRecognition;
- if(!Recognition){
-  if(window.Lampa&&Lampa.Noty&&Lampa.Noty.show)Lampa.Noty.show('Голосовой ввод недоступен в браузере телевизора');
-  else alert('Голосовой ввод недоступен в браузере телевизора');
-  return;
+var voiceKeyboard=null,voiceLastId='',voiceBusy=false,voiceStarted=Math.floor(Date.now()/1000);
+function voiceCode(){
+ var key='lsk_voice_pair_code',v='';
+ try{v=localStorage.getItem(key)||''}catch(e){}
+ if(!/^[a-f0-9]{24}$/.test(v)){
+  var chars='abcdef0123456789',a=[];
+  if(window.crypto&&window.crypto.getRandomValues){
+   var bytes=new Uint8Array(24);window.crypto.getRandomValues(bytes);
+   for(var i=0;i<24;i++)a.push(chars.charAt(bytes[i]%16));
+  }else{
+   for(var j=0;j<24;j++)a.push(chars.charAt(Math.floor(Math.random()*16)));
+  }
+  v=a.join('');
+  try{localStorage.setItem(key,v)}catch(e){}
  }
- try{
-  var rec=new Recognition();
-  rec.lang=(window.Lampa&&Lampa.Storage&&Lampa.Storage.get&&Lampa.Storage.get('language','ru')==='uk')?'uk-UA':'ru-RU';
-  rec.interimResults=false;
-  rec.maxAlternatives=1;
-  rec.onresult=function(event){
-   var phrase=event.results&&event.results[0]&&event.results[0][0]&&event.results[0][0].transcript;
-   if(!phrase)return;
-   kb.setInput(phrase);
-   cursor=split(phrase).length;
-   if(kb.options&&typeof kb.options.onChange==='function')kb.options.onChange(phrase);
-   display(phrase);
-  };
-  rec.onerror=function(event){
-   var msg=event&&event.error==='not-allowed'?'Нет доступа к микрофону':'Голосовой ввод: '+(event.error||'ошибка');
-   if(window.Lampa&&Lampa.Noty&&Lampa.Noty.show)Lampa.Noty.show(msg);
-  };
-  rec.start();
- }catch(e){
-  if(window.Lampa&&Lampa.Noty&&Lampa.Noty.show)Lampa.Noty.show('Не удалось включить микрофон');
- }
+ return v;
 }
+function showVoicePair(){
+ var code=voiceCode();
+ var url='https://mormonmormon7877.github.io/lampa-style/voice.html';
+ var msg='Голосовой поиск через Xiaomi. Открой на телефоне: '+url+'  Код подключения: '+code+'  (вводится один раз)';
+ if(window.Lampa&&Lampa.Noty&&Lampa.Noty.show)Lampa.Noty.show(msg);
+ var existing=document.getElementById('lsk-voice-pair');
+ if(existing){existing.parentNode.removeChild(existing);return}
+ var panel=document.createElement('div');panel.id='lsk-voice-pair';
+ panel.style.cssText='position:fixed;z-index:999999;left:10%;right:10%;top:15%;padding:35px;background:#161b28;color:white;border:3px solid #e7b936;border-radius:14px;text-align:center;font:25px Arial';
+ var heading=document.createElement('div');heading.textContent='🎤 Голосовой поиск через Xiaomi';heading.style.cssText='font-size:34px;margin-bottom:22px';
+ var link=document.createElement('div');link.textContent=url;link.style.cssText='font-size:20px;overflow-wrap:anywhere;margin:12px';
+ var label=document.createElement('div');label.textContent='Код подключения (один раз):';label.style.cssText='margin-top:22px';
+ var token=document.createElement('div');token.textContent=code;token.style.cssText='font: bold 31px monospace;color:#ffd34b;letter-spacing:2px;margin:16px';
+ var hint=document.createElement('div');hint.textContent='Введи код на телефоне. Затем нажимай микрофон на телефоне и произноси название фильма.';hint.style.cssText='font-size:19px';
+ var close=document.createElement('div');close.className='selector';close.textContent='Закрыть ✕';close.style.cssText='background:#e7b936;color:#111;display:inline-block;padding:14px 42px;border-radius:8px;margin-top:24px';
+ function hide(){if(panel.parentNode)panel.parentNode.removeChild(panel)}
+ if(window.jQuery)window.jQuery(close).on('hover:enter',hide);
+ close.addEventListener('click',hide);
+ panel.appendChild(heading);panel.appendChild(link);panel.appendChild(label);panel.appendChild(token);panel.appendChild(hint);panel.appendChild(close);
+ document.body.appendChild(panel);
+ try{if(window.Lampa&&Lampa.Controller&&Lampa.Controller.collectionAppend)Lampa.Controller.collectionAppend(close)}catch(e){}
+}
+function voiceSearch(kb){voiceKeyboard=kb;showVoicePair()}
+function pollVoice(){
+ if(voiceBusy||!searchOpen()||!voiceKeyboard)return;
+ voiceBusy=true;
+ var xhr=new XMLHttpRequest();
+ var url='https://ntfy.sh/lampa-voice-'+voiceCode()+'/json?poll=1&since='+encodeURIComponent(voiceLastId||String(voiceStarted));
+ xhr.open('GET',url,true);
+ xhr.timeout=7000;
+ xhr.onreadystatechange=function(){
+  if(xhr.readyState!==4)return;
+  voiceBusy=false;
+  if(xhr.status!==200)return;
+  var lines=xhr.responseText.split('\n');
+  lines.forEach(function(line){
+   if(!line)return;
+   try{
+    var m=JSON.parse(line);
+    if(m.event!=='message'||!m.id)return;
+    voiceLastId=m.id;
+    if(m.time<voiceStarted||!searchOpen())return;
+    var phrase=String(m.message||'').trim().slice(0,150);
+    if(!phrase)return;
+    voiceKeyboard.setInput(phrase);
+    cursor=split(phrase).length;
+    if(voiceKeyboard.options&&typeof voiceKeyboard.options.onChange==='function')voiceKeyboard.options.onChange(phrase);
+    display(phrase);
+   }catch(e){}
+  });
+ };
+ xhr.onerror=function(){voiceBusy=false};
+ xhr.ontimeout=function(){voiceBusy=false};
+ try{xhr.send()}catch(e){voiceBusy=false}
+}
+setInterval(pollVoice,3500);
 function customSearchKeyboard(opts){
  var self=this;
  this.options=opts;
@@ -243,6 +287,6 @@ function installRestart(){
 }
 var restartTimer=setInterval(installRestart,2000);
 installRestart();
-window.LampaSmartKeyboard={version:'4.2',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 4.2');
+window.LampaSmartKeyboard={version:'4.3',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 4.3');
 })();
