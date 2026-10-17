@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 3.2: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 3.3: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.2')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.3')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -39,8 +39,15 @@ function installPatch(){
    if(button==='{BKSP}'&&cursor>0){a.splice(cursor-1,1);cursor--}
    if(button==='{SPACE}'){a.splice(cursor,0,' ');cursor++}
    var next=a.join('');
-   this.setInput(next);
-   if(this.options&&typeof this.options.onChange==='function')this.options.onChange(next);
+   // Do not run Lampa's own BKSP/SPACE callback: it always edits the end.
+   var previousCallback=this.options&&this.options.onKeyPress;
+   if(this.options)this.options.onKeyPress=function(){};
+   try{
+    this.setInput(next);
+    if(this.options&&typeof this.options.onChange==='function')this.options.onChange(next);
+   }finally{
+    if(this.options)this.options.onKeyPress=previousCallback;
+   }
    display(next);
    return;
   }
@@ -132,6 +139,6 @@ function installRestart(){
 var restartTries=0,restartTimer=setInterval(function(){
  if(installRestart()||++restartTries>120)clearInterval(restartTimer);
 },500);
-window.LampaSmartKeyboard={version:'3.2',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 3.2');
+window.LampaSmartKeyboard={version:'3.3',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 3.3');
 })();
