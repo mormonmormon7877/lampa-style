@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 4.0: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 4.1: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='4.0')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='4.1')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -23,6 +23,16 @@ function display(value){
  marker.appendChild(caret);
  marker.appendChild(document.createTextNode(a.slice(p).join('')));
  if(!a.length)marker.appendChild(document.createTextNode('  ← курсор →'));
+}
+function installLargeStyle(){
+ if(document.getElementById('lsk-large-style'))return;
+ var style=document.createElement('style');
+ style.id='lsk-large-style';
+ style.textContent='body.search--open .simple-keyboard:has(.lsk-left){width:100%!important;max-width:100%!important;font-size:1.25em!important}' +
+ 'body.search--open .simple-keyboard:has(.lsk-left) .hg-row{display:flex!important;gap:6px!important;margin-bottom:7px!important}' +
+ 'body.search--open .simple-keyboard:has(.lsk-left) .hg-button{min-height:64px!important;min-width:0!important;flex:1 1 0!important;padding:10px 3px!important;font-size:25px!important;display:flex!important;align-items:center!important;justify-content:center!important;box-sizing:border-box!important}' +
+ 'body.search--open .simple-keyboard:has(.lsk-left) .lsk-left,body.search--open .simple-keyboard:has(.lsk-left) .lsk-right{flex:2 1 0!important;font-size:19px!important}';
+ document.head.appendChild(style);
 }
 function nativeClass(){return window.SimpleKeyboard&&window.SimpleKeyboard.default}
 function patchInstance(kb){
@@ -169,6 +179,7 @@ function schedule(){
 }
 function init(){
  if(!document.body)return;
+ installLargeStyle();
  installPatch();
  var observer=new MutationObserver(schedule);
  observer.observe(document.body,{childList:true,subtree:true});
@@ -202,6 +213,6 @@ function installRestart(){
 }
 var restartTimer=setInterval(installRestart,2000);
 installRestart();
-window.LampaSmartKeyboard={version:'4.0',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 4.0');
+window.LampaSmartKeyboard={version:'4.1',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 4.1');
 })();
