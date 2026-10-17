@@ -1,7 +1,7 @@
-/* Lampa Smart Keyboard 3.4: inline cursor editing on native Lampa keyboard */
+/* Lampa Smart Keyboard 3.5: inline cursor editing on native Lampa keyboard */
 (function(){
 'use strict';
-if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.4')return;
+if(window.LampaSmartKeyboard&&window.LampaSmartKeyboard.version==='3.5')return;
 var cursor=0,tracking=false,patched=false,scheduled=false,marker=null;
 function split(s){return Array.from(s||'')}
 function limit(n,max){return Math.max(0,Math.min(n,max))}
@@ -52,8 +52,17 @@ function installPatch(){
    return;
   }
   if(typeof button==='string'&&button.charAt(0)!=='{'&&button.length){
-   // Native library appends characters. Restore insertion at the cursor afterwards.
-   result=original.apply(this,arguments);
+   // Insert directly at the caret. Native append must not run.
+   var chars=split(button);
+   Array.prototype.splice.apply(a,[cursor,0].concat(chars));
+   cursor+=chars.length;
+   var corrected=a.join('');
+   this.setInput(corrected);
+   if(this.options&&typeof this.options.onChange==='function')this.options.onChange(corrected);
+   display(corrected);
+   return;
+  }
+  result=original.apply(this,arguments);
    var after=this.getInput()||'',added=split(after).slice(split(before).length).join('');
    if(added){
     var addedChars=split(added);Array.prototype.splice.apply(a,[cursor,0].concat(addedChars));cursor+=addedChars.length;
@@ -89,7 +98,7 @@ function installControls(){
  if(!kb.querySelector('.lsk-left')){
   [['◀ Курсор',-1,'lsk-left'],['Курсор ▶',1,'lsk-right']].forEach(function(item){
    var b=document.createElement('div');
-   b.className='hg-button selector '+item[2];
+   b.className='hg-button selector binded '+item[2];
    b.textContent=item[0];b.style.cssText='min-width:108px;background:#dcb332;color:#151515;font-weight:bold';
    b.setAttribute('data-skbtn',item[2]);
    if(window.jQuery)window.jQuery(b).on('hover:enter',function(){move(item[1])});
@@ -143,6 +152,6 @@ function installRestart(){
 }
 var restartTimer=setInterval(installRestart,2000);
 installRestart();
-window.LampaSmartKeyboard={version:'3.4',move:move};
-console.log('[Lampa Smart Keyboard] native inline editor 3.4');
+window.LampaSmartKeyboard={version:'3.5',move:move};
+console.log('[Lampa Smart Keyboard] native inline editor 3.5');
 })();
